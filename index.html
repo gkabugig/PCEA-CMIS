@@ -2140,7 +2140,13 @@ function renderDashboard(){
   return `
     ${sectionHeader('Dashboard','Congregation overview — updated live from every module below, so nothing here can disagree with its own page.')}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:32px;">
-      ${statCard('Total people', people.toLocaleString(), 'Members + household dependants', 'members')}
+      <div class="card" onclick="setUI({view:'members'})" style="cursor:pointer;" role="link" tabindex="0" onkeydown="if(event.key==='Enter')setUI({view:'members'})">
+        <div style="font-size:12px;opacity:0.6;margin-bottom:6px;">Total people</div>
+        <div style="display:flex;gap:18px;">
+          <div><div class="stat-num" style="font-size:26px;">${STATE.members.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">members</div></div>
+          <div><div class="stat-num" style="font-size:26px;">${STATE.households.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">households</div></div>
+        </div>
+      </div>
       ${statCard('Districts & Groups', STATE.districts.length+' / '+groups, 'Districts / active groups', 'groups')}
       ${statCard('Visitors pending', pendingVisitors, 'Not yet joined', 'visitors')}
       ${statCard('Upcoming events', events, 'From today onward', 'events')}
