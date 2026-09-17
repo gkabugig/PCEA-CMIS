@@ -404,7 +404,7 @@ const STATUS_TONE = {
   Cleared:'var(--forest)', Paid:'var(--forest)', 'Partially Paid':'var(--brass)', Unpaid:'var(--wine)', Vacant:'rgba(43,43,40,0.4)'
 };
 const CARD_GROUPS = ["PCMF (Presbyterian Church Men's Fellowship)", "Woman's Guild", "Boys' & Girls' Brigade"];
-const SERVICE_TYPES = ['1st Service','2nd Service','Youth Service','Church School'];
+const SERVICE_TYPES = ['1st Service','2nd Service','Joint Service','Youth Service','Church School'];
 const PASTORAL_CATEGORIES = ['Absentee','Hospital Visit','Bereavement','Counseling','New Member Orientation','Prayer Request','Other'];
 const PASTORAL_STATUS_OPTIONS = ['Open','In Progress','Closed'];
 const COMM_CHANNELS = ['SMS','WhatsApp','Church Announcement','Bulletin Notice'];
@@ -1076,7 +1076,7 @@ function visitorFollowUpModalBody(){
 /* ---------------------------------------------------------------------
    WORSHIP & ATTENDANCE (Service Book)
 --------------------------------------------------------------------- */
-function serviceRowTotal(sv){ return num(sv.offering_amt)+num(sv.tithe_amt)+num(sv.thanksgiving_amt); }
+function serviceRowTotal(sv){ return num(sv.offering_amt)+num(sv.tithe_amt)+num(sv.thanksgiving_amt)+num(sv.hc_offering_amt); }
 function communionTotals(rows){
   const hc = rows.filter(sv=>sv.holy_communion);
   return { services: hc.length, communicants: hc.reduce((a,sv)=>a+num(sv.communion_count),0) };
@@ -1157,20 +1157,20 @@ function renderServiceDayDetail(dateStr){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px;max-width:640px;">
       ${statCard('Services', rows.length, rows.length===1?'service logged':'services logged')}
       ${statCard('Total attendance', totalAttendance.toLocaleString(), 'across all services')}
-      ${statCard('Total collections', fmtKES(totalCollections), 'offering + tithe + thanksgiving')}
+      ${statCard('Total collections', fmtKES(totalCollections), 'offering + tithe + thanksgiving + H/C')}
       ${statCard('Holy Communion', dayHC.services>0 ? dayHC.communicants.toLocaleString() : '—', dayHC.services>0 ? '('+dayHC.services+' service'+(dayHC.services===1?'':'s')+')' : 'none this day')}
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Type</th><th>Service Leader</th><th>Preacher</th><th>Readings</th><th>Attendance</th><th>Offering</th><th>Tithe</th><th>Thanksgiving</th><th>Total</th><th>Holy Communion</th><th></th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Type</th><th>Service Leader</th><th>Preacher</th><th>Readings</th><th>Attendance</th><th>Offering</th><th>Tithe</th><th>Thanksgiving</th><th>H/C</th><th>Total</th><th>Holy Communion</th><th></th></tr></thead><tbody>
     ${rows.map(sv=>`<tr>
       <td><a href="#" onclick="setUI({selectedServiceId:'${sv.id}'});return false;" style="color:var(--brass);font-weight:600;">${esc(sv.service_type||'1st Service')}</a></td>
       <td>${esc(sv.service_leader)}</td><td>${esc(sv.preacher)}</td>
       <td style="font-size:12px;">${esc(sv.reading1)}<br>${esc(sv.reading2)}</td>
       <td>${sv.attendance}</td>
-      <td>${fmtKES(sv.offering_amt)}</td><td>${fmtKES(sv.tithe_amt)}</td><td>${fmtKES(sv.thanksgiving_amt)}</td>
+      <td>${fmtKES(sv.offering_amt)}</td><td>${fmtKES(sv.tithe_amt)}</td><td>${fmtKES(sv.thanksgiving_amt)}</td><td>${fmtKES(sv.hc_offering_amt)}</td>
       <td><strong>${fmtKES(serviceRowTotal(sv))}</strong></td>
       <td>${sv.holy_communion ? `Yes · ${sv.communion_count!=null?sv.communion_count:'not recorded'}` : 'No'}</td>
       <td>${canEdit ? `<button class="btn-ghost" style="padding:3px 9px;font-size:11.5px;" onclick="openServiceModal('${sv.id}')">Edit</button>` : ''}</td>
-    </tr>`).join('') || `<tr><td colspan="11" style="opacity:0.6;">No services logged for this day.</td></tr>`}
+    </tr>`).join('') || `<tr><td colspan="12" style="opacity:0.6;">No services logged for this day.</td></tr>`}
     </tbody></table></div>
   `;
 }
@@ -1195,6 +1195,7 @@ function renderServiceDetail(sv){
           <tr><td>Offering</td><td style="text-align:right;">${fmtKES(sv.offering_amt)}</td></tr>
           <tr><td>Tithe</td><td style="text-align:right;">${fmtKES(sv.tithe_amt)}</td></tr>
           <tr><td>Thanksgiving</td><td style="text-align:right;">${fmtKES(sv.thanksgiving_amt)}</td></tr>
+          <tr><td>H/C (Holy Communion offering)</td><td style="text-align:right;">${fmtKES(sv.hc_offering_amt)}</td></tr>
           <tr style="background:rgba(166,129,60,0.06);"><td style="font-weight:600;border-bottom:none;">Total</td><td style="text-align:right;font-weight:600;border-bottom:none;">${fmtKES(serviceRowTotal(sv))}</td></tr>
         </tbody></table></div>
       </div>
@@ -1207,11 +1208,11 @@ function openServiceModal(id){
   UI.modalProps = editing ? {
     id, date:editing.service_date, serviceType:editing.service_type||SERVICE_TYPES[0], serviceLeader:editing.service_leader, preacher:editing.preacher,
     reading1:editing.reading1, reading2:editing.reading2, attendance:editing.attendance,
-    offeringAmt:editing.offering_amt, titheAmt:editing.tithe_amt, thanksgivingAmt:editing.thanksgiving_amt,
+    offeringAmt:editing.offering_amt, titheAmt:editing.tithe_amt, thanksgivingAmt:editing.thanksgiving_amt, hcOfferingAmt:editing.hc_offering_amt,
     holyCommunion:editing.holy_communion?'Yes':'No', communionCount:editing.communion_count
   } : {
     id:null, date:UI.selectedServiceDate || new Date().toISOString().slice(0,10), serviceType:UI.serviceTypeFilter!=='All'?UI.serviceTypeFilter:SERVICE_TYPES[0], serviceLeader:'', preacher:'', reading1:'', reading2:'',
-    attendance:0, offeringAmt:0, titheAmt:0, thanksgivingAmt:0, holyCommunion:'No', communionCount:null
+    attendance:0, offeringAmt:0, titheAmt:0, thanksgivingAmt:0, hcOfferingAmt:0, holyCommunion:'No', communionCount:null
   };
   UI.modalErrors = {};
   render();
@@ -1224,7 +1225,7 @@ async function saveServiceModal(){
   const payload = {
     service_date:p.date, service_type:p.serviceType||SERVICE_TYPES[0], service_leader:p.serviceLeader.trim(), preacher:p.preacher.trim(),
     reading1:p.reading1.trim(), reading2:p.reading2.trim(), attendance:p.attendance||0,
-    offering_amt:p.offeringAmt||0, tithe_amt:p.titheAmt||0, thanksgiving_amt:p.thanksgivingAmt||0,
+    offering_amt:p.offeringAmt||0, tithe_amt:p.titheAmt||0, thanksgiving_amt:p.thanksgivingAmt||0, hc_offering_amt:p.hcOfferingAmt||0,
     holy_communion:p.holyCommunion==='Yes', communion_count:p.holyCommunion==='Yes' ? (p.communionCount??null) : null
   };
   await withBusyState(async ()=>{
@@ -1259,7 +1260,7 @@ async function confirmRemoveService(id){
 }
 function serviceModalBody(){
   const p = UI.modalProps, e = UI.modalErrors||{};
-  const total = (p.offeringAmt||0) + (p.titheAmt||0) + (p.thanksgivingAmt||0);
+  const total = (p.offeringAmt||0) + (p.titheAmt||0) + (p.thanksgivingAmt||0) + (p.hcOfferingAmt||0);
   return `
     <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit service':'Log a service'}</h2>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -1277,6 +1278,7 @@ function serviceModalBody(){
       ${field('Offering (KES)', `<input type="text" inputmode="numeric" pattern="[0-9]*" class="field-input" value="${p.offeringAmt}" oninput="setModalProp('offeringAmt',num(this.value))">`)}
       ${field('Tithe (KES)', `<input type="text" inputmode="numeric" pattern="[0-9]*" class="field-input" value="${p.titheAmt}" oninput="setModalProp('titheAmt',num(this.value))">`)}
       ${field('Thanksgiving (KES)', `<input type="text" inputmode="numeric" pattern="[0-9]*" class="field-input" value="${p.thanksgivingAmt}" oninput="setModalProp('thanksgivingAmt',num(this.value))">`)}
+      ${field('H/C (KES)', `<input type="text" inputmode="numeric" pattern="[0-9]*" class="field-input" value="${p.hcOfferingAmt}" oninput="setModalProp('hcOfferingAmt',num(this.value))">`)}
     </div>
     <div style="font-size:12.5px;opacity:0.65;margin:-8px 0 14px;">Total offertory: ${fmtKES(total)}</div>
     ${field('Holy Communion', `<select class="field-input" onchange="setModalProp('holyCommunion',this.value)"><option ${p.holyCommunion==='No'?'selected':''}>No</option><option ${p.holyCommunion==='Yes'?'selected':''}>Yes</option></select>`)}
@@ -1611,19 +1613,21 @@ function pastoralVisitModalBody(){
 function offeringTotal(){ return STATE.services.reduce((a,sv)=>a+num(sv.offering_amt),0); }
 function titheTotal(){ return STATE.services.reduce((a,sv)=>a+num(sv.tithe_amt),0); }
 function thanksgivingTotal(){ return STATE.services.reduce((a,sv)=>a+num(sv.thanksgiving_amt),0); }
+function hcOfferingTotal(){ return STATE.services.reduce((a,sv)=>a+num(sv.hc_offering_amt),0); }
 function groupContributionsTotal(){ return STATE.groups.reduce((a,g)=>a+num(g.week_collection),0); }
 function financeSummary(){
   const offering = offeringTotal();
   const tithe = titheTotal();
   const thanksgiving = thanksgivingTotal();
-  const sunday = offering + tithe + thanksgiving;
+  const hc = hcOfferingTotal();
+  const sunday = offering + tithe + thanksgiving + hc;
   const group = groupContributionsTotal();
   const dev = num(STATE.settings.development_fund);
   const total = sunday + group + dev;
   const mmfAssessed = num(STATE.settings.mmf_assessed);
   const mmfPaid = num(STATE.settings.mmf_paid);
   const balance = mmfAssessed - mmfPaid;
-  return { offering, tithe, thanksgiving, sunday, group, dev, total, mmfAssessed, mmfPaid, balance };
+  return { offering, tithe, thanksgiving, hc, sunday, group, dev, total, mmfAssessed, mmfPaid, balance };
 }
 function groupAnnualTotal(g){
   const givingSum = STATE.groupGiving.filter(r=>r.group_id===g.id).reduce((a,row)=>a+num(row.amount),0);
@@ -1692,6 +1696,7 @@ function renderFinance(){
           <tr><td>Offering</td><td style="text-align:right;">${fmtKES(fin.offering)}</td></tr>
           <tr><td>Tithe</td><td style="text-align:right;">${fmtKES(fin.tithe)}</td></tr>
           <tr><td>Thanksgiving</td><td style="text-align:right;">${fmtKES(fin.thanksgiving)}</td></tr>
+          <tr><td>H/C (Holy Communion offering)</td><td style="text-align:right;">${fmtKES(fin.hc)}</td></tr>
           <tr><td>Groups &amp; districts <span style="opacity:0.55;font-size:11px;">(from each group's Giving tab)</span></td><td style="text-align:right;">${fmtKES(fin.group)}</td></tr>
           <tr><td>Development fund</td><td style="text-align:right;">
             ${canEdit ? `<input type="number" class="field-input" style="text-align:right;" value="${STATE.settings.development_fund}" onchange="updateSetting('development_fund', this.valueAsNumber||0)">`
@@ -1998,8 +2003,8 @@ function buildReportSections(){
     {id:'groups-by-category', title:'Groups by Category', desc:'Fellowships versus standing committees, by member count.', metric:totalGroupsCount()+' groups',
       headers:['Category','Members','Groups','Share %'], rows:categoryBreakdown().map(r=>[r.label,r.members,r.count,r.pct]), filename:'groups-by-category.csv'},
     {id:'sunday-service-register', title:'Sunday Service Register', desc:'Service type, leader, preacher, offering breakdown and Holy Communion per service.', metric:communionCount()+' communion services recorded',
-      headers:['Date','Service Type','Service Leader','Preacher','Offering (KES)','Tithe (KES)','Thanksgiving (KES)','Total (KES)','Holy Communion'],
-      rows:STATE.services.map(sv=>[fmtDate(sv.service_date),sv.service_type||'1st Service',sv.service_leader,sv.preacher,sv.offering_amt,sv.tithe_amt,sv.thanksgiving_amt,serviceRowTotal(sv),sv.holy_communion?'Yes':'No']), filename:'sunday-service-register.csv'},
+      headers:['Date','Service Type','Service Leader','Preacher','Offering (KES)','Tithe (KES)','Thanksgiving (KES)','H/C (KES)','Total (KES)','Holy Communion'],
+      rows:STATE.services.map(sv=>[fmtDate(sv.service_date),sv.service_type||'1st Service',sv.service_leader,sv.preacher,sv.offering_amt,sv.tithe_amt,sv.thanksgiving_amt,sv.hc_offering_amt,serviceRowTotal(sv),sv.holy_communion?'Yes':'No']), filename:'sunday-service-register.csv'},
     {id:'events-calendar', title:'Events Calendar', desc:'All events with organizer and category.', metric:STATE.events.length+' events',
       headers:['Date','Name','Category','Location','Organizer'],
       rows:STATE.events.map(e=>[fmtDate(e.event_date), e.name, e.category, e.location, eventOrgName(e)]), filename:'events-calendar.csv'},
