@@ -3127,11 +3127,11 @@ function groupModalBody(){
     <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit group':'New group'}</h2>
     ${field('Name', `<input class="field-input" value="${esc(p.name)}" oninput="setModalPropQuiet('name',this.value)">`, e.name)}
     ${field('Category', `<select class="field-input" onchange="setModalProp('category',this.value)"><option ${p.category==='Fellowship'?'selected':''}>Fellowship</option><option ${p.category==='Committee'?'selected':''}>Committee</option></select>`)}
-    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    ${p.id ? `<div style="display:flex;gap:12px;flex-wrap:wrap;">
       ${field('Day', `<input class="field-input" value="${esc(p.meeting_day)}" oninput="setModalPropQuiet('meeting_day',this.value)">`)}
       ${field('Time', `<input class="field-input" value="${esc(p.meeting_time)}" oninput="setModalPropQuiet('meeting_time',this.value)">`)}
     </div>
-    ${field('Location', `<input class="field-input" value="${esc(p.location)}" oninput="setModalPropQuiet('location',this.value)">`)}
+    ${field('Location', `<input class="field-input" value="${esc(p.location)}" oninput="setModalPropQuiet('location',this.value)">`)}` : `<div style="font-size:11.5px;opacity:0.6;margin:-4px 0 14px;">Meeting day, time and location can be set from the group's own page once it's created.</div>`}
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:2px 0 14px;cursor:pointer;">
       <input type="checkbox" ${p.fee_exempt?'checked':''} onchange="setModalProp('fee_exempt',this.checked)"> No financial obligation (membership only)
     </label>
