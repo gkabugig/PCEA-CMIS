@@ -411,7 +411,6 @@ const COMM_CHANNELS = ['SMS','WhatsApp','Church Announcement','Bulletin Notice']
 const COMM_AUDIENCE_TYPES = ['Whole Congregation','District','Group','Individual Member'];
 const MONTH_OPTIONS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const REGISTRATION_OPTIONS = ['Paid','Partially Paid','Unpaid'];
-const OFFICIAL_ROLE_OPTIONS = ['Chair','Vice Chair','Secretary','Vice Secretary','Treasurer','Member'];
 const ROLE_DEFS = [
   {role:'System Administrator', desc:'Full read and write access to every record, including pastoral and financial data. Responsible for keeping the system itself running.'},
   {role:'Church Secretary', desc:'Full read and write access to church records, except pastoral follow-up cases. Handles day-to-day data entry for the LCC office.'},
@@ -2232,10 +2231,13 @@ function renderGroups(){
   `;
 }
 function groupOfficialsSummary(groupId){
-  const roster = groupRosterFor(groupId);
-  const byOffice = {};
-  roster.forEach(r=>{ if(r.gm.office && r.gm.office!=='Member') (byOffice[r.gm.office]=byOffice[r.gm.office]||[]).push(r.name); });
-  return OFFICIAL_ROLE_OPTIONS.filter(o=>o!=='Member' && byOffice[o]).map(o=>({office:o, name:byOffice[o].join(', ')}));
+  const g = groupById(groupId);
+  if(!g) return [];
+  return [
+    {office:'Chair', name:g.chair}, {office:'Vice Chair', name:g.vice_chair},
+    {office:'Secretary', name:g.secretary}, {office:'Vice Secretary', name:g.vice_secretary},
+    {office:'Treasurer', name:g.treasurer}
+  ].filter(o=>o.name);
 }
 
 /* ---- Districts tab ---- */
@@ -2336,65 +2338,36 @@ function renderGroupDetail(g){
   `;
 }
 function renderOfficialsCard(g, roster, canEdit){
-  const offices = OFFICIAL_ROLE_OPTIONS.filter(o=>o!=='Member');
-  // Patrons are always Elders — this picks from the church's actual Elder
-  // role holders rather than a free-typed name, and isn't tied to the
-  // group's own roster (an Elder patronizes a group without being a
-  // roster "member" of it), so there's only one Patron control, not two.
-  const elders = STATE.roleHolders.filter(r=>r.role==='Elder').slice().sort((a,b)=>a.name.localeCompare(b.name));
+  // Officials are typed in directly rather than picked from the roster or
+  // the Elder list — the person holding an office isn't always someone
+  // already entered elsewhere in the system, and forcing that lookup was
+  // more friction than it was worth. These are plain text columns on the
+  // group itself (mis_groups.patron/chair/...), not linked records.
+  const fields = [
+    ['Patron','patron'], ['Chair','chair'], ['Vice Chair','vice_chair'],
+    ['Secretary','secretary'], ['Vice Secretary','vice_secretary'], ['Treasurer','treasurer']
+  ];
   return `
     <div class="card" style="margin-bottom:20px;max-width:640px;">
       <h3 style="font-size:13.5px;margin-bottom:12px;">Officials at a glance</h3>
       <div class="officials-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-        <div>
-          <div style="font-size:11.5px;opacity:0.6;margin-bottom:4px;">Patron</div>
-          ${canEdit ? `<select class="field-input" onchange="updateGroupField('${g.id}','patron', this.value)">
-              <option value="" ${!g.patron?'selected':''}>— Vacant —</option>
-              ${elders.map(e=>`<option ${g.patron===e.name?'selected':''}>${esc(e.name)}</option>`).join('')}
-            </select>` : `<div style="font-size:13.5px;">${esc(g.patron||'Not assigned')}</div>`}
-        </div>
-        ${offices.map(office=>{
-          const holder = roster.find(r=>r.gm.office===office);
-          return `<div>
-            <div style="font-size:11.5px;opacity:0.6;margin-bottom:4px;">${esc(office)}</div>
-            ${canEdit ? `<select class="field-input" onchange="setOfficeAssignment('${g.id}', this.value, '${office.replace(/'/g,"\\'")}')">
-                <option value="">— Vacant —</option>
-                ${roster.map(r=>`<option value="${r.personType}:${r.personId}" ${holder && holder.personId===r.personId?'selected':''}>${esc(r.name)}</option>`).join('')}
-              </select>` : `<div style="font-size:13.5px;">${holder?esc(holder.name):'Vacant'}</div>`}
-          </div>`;
-        }).join('')}
+        ${fields.map(([label,key])=>`<div>
+          <div style="font-size:11.5px;opacity:0.6;margin-bottom:4px;">${esc(label)}</div>
+          ${canEdit ? `<input class="field-input" placeholder="Not assigned" value="${esc(g[key])}" onchange="updateGroupField('${g.id}','${key}', this.value)">` : `<div style="font-size:13.5px;">${esc(g[key]||'Not assigned')}</div>`}
+        </div>`).join('')}
       </div>
     </div>
   `;
 }
-async function setOfficeAssignment(groupId, personKey, office){
-  await withBusyState(async ()=>{
-    // Clear whoever currently holds this office first — the DB also
-    // enforces one-holder-per-office, so this order avoids a transient
-    // unique-constraint conflict.
-    await sb.from('mis_group_members').update({office:'Member'}).eq('group_id', groupId).eq('office', office);
-    if(personKey){
-      const [personType, personId] = personKey.split(':');
-      const { error } = await sb.from('mis_group_members').update({office}).eq('group_id', groupId).eq('person_type', personType).eq('person_id', personId);
-      if(error){ showToast('Could not update: '+error.message); return; }
-    }
-    await logAudit('Updated group office', office+' — '+groupName(groupId));
-    await refetch('groupMembers');
-    render();
-  });
-}
 function renderGroupMembersTab(g, roster, canEdit){
   const hasCardFields = CARD_GROUPS.includes(g.name);
-  const officeCell = r => canEdit
-    ? `<select class="field-input" onchange="setPersonOffice('${g.id}','${r.personType}','${r.personId}',this.value)">${OFFICIAL_ROLE_OPTIONS.map(o=>`<option ${r.gm.office===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`
-    : esc(r.gm.office);
   return `
     ${UI.focusName ? `<div class="banner">Showing only ${esc(UI.focusName)}. <a href="#" onclick="setUI({focusName:null});return false;" style="color:var(--brass);">Show full roster</a></div>` : ''}
     ${canEdit ? renderAddToRoster(g) : ''}
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>District</th><th>Phone</th><th>Office</th>${canEdit?'<th></th>':''}</tr></thead><tbody>
-    ${roster.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.districtName||'—')}</td><td>${esc(r.phone||'—')}</td><td>${officeCell(r)}</td>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>District</th><th>Phone</th>${canEdit?'<th></th>':''}</tr></thead><tbody>
+    ${roster.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.districtName||'—')}</td><td>${esc(r.phone||'—')}</td>
       ${canEdit ? `<td><button class="btn-danger" style="padding:4px 9px;font-size:11.5px;" onclick="removeFromRoster('${g.id}','${r.personType}','${r.personId}')">Remove</button></td>` : ''}
-    </tr>`).join('') || `<tr><td colspan="${canEdit?5:4}" style="opacity:0.6;">No one is currently assigned to this group.</td></tr>`}
+    </tr>`).join('') || `<tr><td colspan="${canEdit?4:3}" style="opacity:0.6;">No one is currently assigned to this group.</td></tr>`}
     </tbody></table></div>
     ${hasCardFields ? `<div style="font-size:11.5px;opacity:0.55;margin-top:10px;">Member cards (member number, photo, brigade standing) aren't moved over to the shared database yet.</div>` : ''}
   `;
@@ -2439,9 +2412,6 @@ async function removeFromRoster(groupId, personType, personId){
     await refetch('groupMembers');
     render();
   });
-}
-async function setPersonOffice(groupId, personType, personId, office){
-  await setOfficeAssignment(groupId, personType+':'+personId, office);
 }
 function renderGroupMeetingsTab(g, canEdit){
   const meetings = STATE.groupMeetings.filter(m=>m.group_id===g.id);
@@ -2697,7 +2667,7 @@ function renderPersonGroupsSection(personType, personId, canEdit){
     <h3 style="font-size:15px;margin-bottom:12px;">Groups ${memberships.length?'('+memberships.length+')':''}</h3>
     ${memberships.length===0 ? `<div style="font-size:13px;opacity:0.55;margin-bottom:14px;">Not part of any group yet.</div>` : `
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-        ${memberships.map(x=>`<span class="chip" style="cursor:default;">${esc(x.group.name)}${x.gm.office!=='Member'?' · '+esc(x.gm.office):''}${canEdit?` <a href="#" onclick="removeFromRoster('${x.group.id}','${personType}','${personId}');return false;" style="color:var(--wine);font-weight:600;margin-left:2px;">×</a>`:''}</span>`).join('')}
+        ${memberships.map(x=>`<span class="chip" style="cursor:default;">${esc(x.group.name)}${canEdit?` <a href="#" onclick="removeFromRoster('${x.group.id}','${personType}','${personId}');return false;" style="color:var(--wine);font-weight:600;margin-left:2px;">×</a>`:''}</span>`).join('')}
       </div>`}
     ${canEdit ? `
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;">
