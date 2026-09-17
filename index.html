@@ -971,8 +971,9 @@ async function saveVisitorModal(){
   });
 }
 function openVisitorFollowUpModal(id){
+  const v = STATE.visitors.find(x=>x.id===id);
   UI.modal='visitorFollowUp';
-  UI.modalProps = {id, date:new Date().toISOString().slice(0,10), by:ME.name, note:'', nextFollowUp:''};
+  UI.modalProps = {id, date:new Date().toISOString().slice(0,10), by:ME.name, note:'', nextFollowUp:(v&&v.next_follow_up)||''};
   UI.modalErrors = {};
   render();
 }
