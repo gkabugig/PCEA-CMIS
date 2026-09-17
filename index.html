@@ -2518,8 +2518,10 @@ function openGroupModal(id){
   const editing = id ? groupById(id) : null;
   UI.modal='group';
   UI.modalProps = editing
-    ? {id, name:editing.name, category:editing.category, meeting_day:editing.meeting_day, meeting_time:editing.meeting_time, location:editing.location, collection_month:editing.collection_month||'', fee_exempt:!!editing.fee_exempt}
-    : {id:null, name:'', category:'Fellowship', meeting_day:'', meeting_time:'', location:'', collection_month:'', fee_exempt:false};
+    ? {id, name:editing.name, category:editing.category, meeting_day:editing.meeting_day, meeting_time:editing.meeting_time, location:editing.location, collection_month:editing.collection_month||'', fee_exempt:!!editing.fee_exempt,
+       patron:editing.patron||'', chair:editing.chair||'', vice_chair:editing.vice_chair||'', secretary:editing.secretary||'', vice_secretary:editing.vice_secretary||'', treasurer:editing.treasurer||''}
+    : {id:null, name:'', category:'Fellowship', meeting_day:'', meeting_time:'', location:'', collection_month:'', fee_exempt:false,
+       patron:'', chair:'', vice_chair:'', secretary:'', vice_secretary:'', treasurer:''};
   UI.modalErrors = {};
   render();
 }
@@ -2528,7 +2530,8 @@ async function saveGroupModal(){
   const errs = {name: validateRequired(p.name,'Name')};
   UI.modalErrors = errs;
   if(errs.name){ render(); return; }
-  const payload = { name:p.name.trim(), category:p.category, meeting_day:p.meeting_day.trim(), meeting_time:p.meeting_time.trim(), location:p.location.trim(), fee_exempt:!!p.fee_exempt, collection_month: p.fee_exempt ? null : (p.collection_month||null) };
+  const payload = { name:p.name.trim(), category:p.category, meeting_day:p.meeting_day.trim(), meeting_time:p.meeting_time.trim(), location:p.location.trim(), fee_exempt:!!p.fee_exempt, collection_month: p.fee_exempt ? null : (p.collection_month||null),
+    patron:p.patron.trim(), chair:p.chair.trim(), vice_chair:p.vice_chair.trim(), secretary:p.secretary.trim(), vice_secretary:p.vice_secretary.trim(), treasurer:p.treasurer.trim() };
   await withBusyState(async ()=>{
     if(p.id){
       const { error } = await sb.from('mis_groups').update(payload).eq('id', p.id);
@@ -3100,8 +3103,11 @@ function districtModalBody(){
 }
 function groupModalBody(){
   const p = UI.modalProps, e = UI.modalErrors||{};
+  const knownNames = [...new Set([...STATE.members.map(m=>m.name), ...STATE.households.map(h=>h.name)])].sort((a,b)=>a.localeCompare(b));
+  const officialField = (label,key) => field(label, `<input class="field-input" list="knownPeopleNamesModal" value="${esc(p[key])}" oninput="setModalPropQuiet('${key}',this.value)">`);
   return `
     <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit group':'New group'}</h2>
+    <datalist id="knownPeopleNamesModal">${knownNames.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
     ${field('Name', `<input class="field-input" value="${esc(p.name)}" oninput="setModalPropQuiet('name',this.value)">`, e.name)}
     ${field('Category', `<select class="field-input" onchange="setModalProp('category',this.value)"><option ${p.category==='Fellowship'?'selected':''}>Fellowship</option><option ${p.category==='Committee'?'selected':''}>Committee</option></select>`)}
     ${p.id ? `<div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -3113,7 +3119,19 @@ function groupModalBody(){
       <input type="checkbox" ${p.fee_exempt?'checked':''} onchange="setModalProp('fee_exempt',this.checked)"> No financial obligation (membership only)
     </label>
     ${!p.fee_exempt ? field('Collection month', `<select class="field-input" onchange="setModalProp('collection_month',this.value)"><option value="" ${!p.collection_month?'selected':''}>Not set</option>${MONTH_OPTIONS.map(m=>`<option ${p.collection_month===m?'selected':''}>${m}</option>`).join('')}</select>`) : ''}
-    <div style="font-size:11.5px;opacity:0.6;margin:-4px 0 14px;">Patron and officials are set from the group's own page under "Officials at a glance" once it's created.</div>
+    <div style="font-size:11.5px;opacity:0.6;margin:14px 0 10px;font-weight:600;">Officials</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${officialField('Patron','patron')}
+      ${officialField('Chair','chair')}
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${officialField('Vice Chair','vice_chair')}
+      ${officialField('Secretary','secretary')}
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${officialField('Vice Secretary','vice_secretary')}
+      ${officialField('Treasurer','treasurer')}
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="saveGroupModal()">${p.id?'Save changes':'Create group'}</button>
