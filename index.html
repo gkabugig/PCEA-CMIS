@@ -765,7 +765,6 @@ function render(){
   const nav = visibleNavItems();
   if(!nav.find(n=>n.key===UI.view)) UI.view = landingViewForRole();
   const scopeNote = ME.district_id ? ' — '+(districtName(ME.district_id)||'') : ME.group_id ? ' — '+(groupName(ME.group_id)||'') : '';
-  const roleDesc = (ROLE_DEFS.find(r=>r.role===role)||{}).desc || '';
 
   // Rebuilding #app's innerHTML on every keystroke (via setModalProp/setUI)
   // destroys and recreates the focused input, so typing would otherwise
@@ -797,8 +796,7 @@ function render(){
       <div style="padding:0 24px 16px;border-bottom:1px solid var(--rule);margin-bottom:12px;padding-bottom:16px;">
         <div style="font-size:11px;color:var(--charcoal);opacity:0.55;letter-spacing:0.04em;margin-bottom:4px;">SIGNED IN AS</div>
         <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${esc(ME.name)}</div>
-        <div style="font-size:12px;opacity:0.65;margin-bottom:8px;">${esc(role)}${esc(scopeNote)}</div>
-        <div style="font-size:11px;color:var(--charcoal);opacity:0.55;line-height:1.4;margin-bottom:10px;">${esc(roleDesc)}</div>
+        <div style="font-size:12px;opacity:0.65;margin-bottom:10px;">${esc(role)}${esc(scopeNote)}</div>
         <button class="btn-ghost" style="width:100%;" onclick="changeMyPassword()">Change my password</button>
       </div>
       <nav style="flex:1;padding:0 16px;display:flex;flex-direction:column;">
