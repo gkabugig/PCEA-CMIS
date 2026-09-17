@@ -1969,11 +1969,23 @@ function composeMessageModalBody(){
       ${recipients.length} ${recipients.length===1?'person':'people'} in this audience · ${withPhone.length} with a phone number on file${needsPhone && withPhone.length<recipients.length ? ' — the rest have no phone recorded' : ''}.
       ${csvHref ? ` <a href="${csvHref}" download="recipients.csv" style="color:var(--brass);">Download phone list (CSV) ↓</a>` : ''}
     </div>
-    ${field('Message', `<textarea class="field-input" rows="5" oninput="setModalPropQuiet('message',this.value)">${esc(p.message)}</textarea>`, e.message)}
+    ${field('Message', `<textarea class="field-input" rows="5" oninput="updateComposeMessage(this)">${esc(p.message)}</textarea>`, e.message)}
+    <div id="msgCharCount" style="font-size:11.5px;opacity:0.6;margin:-8px 0 14px;">${smsCharCountLabel(p.message||'', p.channel)}</div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="sendCommunicationNow()">Log as sent</button>
     </div>`;
+}
+function smsCharCountLabel(text, channel){
+  const len = text.length;
+  if(channel!=='SMS') return len+' character'+(len===1?'':'s');
+  const segments = len===0 ? 1 : Math.ceil(len/160);
+  return len+' character'+(len===1?'':'s')+' · '+segments+' SMS segment'+(segments===1?'':'s')+' (160 characters each)';
+}
+function updateComposeMessage(el){
+  UI.modalProps.message = el.value;
+  const counter = document.getElementById('msgCharCount');
+  if(counter) counter.textContent = smsCharCountLabel(el.value, UI.modalProps.channel);
 }
 function commViewModalBody(){
   const c = UI.modalProps.c;
@@ -1993,11 +2005,17 @@ function templateModalBody(){
     <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit template':'New template'}</h2>
     ${field('Name', `<input class="field-input" value="${esc(p.name)}" oninput="setModalPropQuiet('name',this.value)">`, e.name)}
     ${field('Channel', `<select class="field-input" onchange="setModalProp('channel',this.value)">${COMM_CHANNELS.map(c=>`<option ${p.channel===c?'selected':''}>${c}</option>`).join('')}</select>`)}
-    ${field('Message', `<textarea class="field-input" rows="4" placeholder="You can use {{name}}, {{event}}, {{date}}, {{location}}, {{amount}} as reminders of what to fill in..." oninput="setModalPropQuiet('body',this.value)">${esc(p.body)}</textarea>`, e.body)}
+    ${field('Message', `<textarea class="field-input" rows="4" placeholder="You can use {{name}}, {{event}}, {{date}}, {{location}}, {{amount}} as reminders of what to fill in..." oninput="updateTemplateBody(this)">${esc(p.body)}</textarea>`, e.body)}
+    <div id="tplCharCount" style="font-size:11.5px;opacity:0.6;margin:-8px 0 14px;">${smsCharCountLabel(p.body||'', p.channel)}</div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="saveTemplateModal()">${p.id?'Save changes':'Add template'}</button>
     </div>`;
+}
+function updateTemplateBody(el){
+  UI.modalProps.body = el.value;
+  const counter = document.getElementById('tplCharCount');
+  if(counter) counter.textContent = smsCharCountLabel(el.value, UI.modalProps.channel);
 }
 /* ---------------------------------------------------------------------
    REPORTS — every figure here is computed by the same functions used on
@@ -2016,7 +2034,7 @@ function buildReportSections(){
       headers:['Standing','Count','Share %'], rows:membershipByStatus().map(r=>[r.label,r.count,r.pct]), filename:'membership-by-standing.csv'},
     {id:'membership-by-district', title:'Membership by District', desc:'People under each elder\'s district.', metric:membershipByDistrict().map(d=>d.label+': '+d.count).join(', '),
       headers:['District','People','Share %'], rows:membershipByDistrict().map(r=>[r.label,r.count,r.pct]), filename:'membership-by-district.csv'},
-    {id:'groups-by-category', title:'Groups by Category', desc:'Fellowships versus standing committees, by member count.', metric:totalGroupsCount()+' groups',
+    {id:'groups-by-category', title:'Groups by Category', desc:'Fellowships & Committees, by member count.', metric:totalGroupsCount()+' groups',
       headers:['Category','Members','Groups','Share %'], rows:categoryBreakdown().map(r=>[r.label,r.members,r.count,r.pct]), filename:'groups-by-category.csv'},
     {id:'sunday-service-register', title:'Sunday Service Register', desc:'Service type, leader, preacher, offering breakdown and Holy Communion per service.', metric:communionCount()+' communion services recorded',
       headers:['Date','Service Type','Service Leader','Preacher','Offering (KES)','Tithe (KES)','Thanksgiving (KES)','H/C (KES)','Total (KES)','Holy Communion'],
