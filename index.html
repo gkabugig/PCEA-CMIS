@@ -2459,20 +2459,21 @@ function renderOfficialsCard(g, roster, canEdit){
 function fileThumbCell(g, r, field, canEdit){
   const path = r.gm[field];
   const inputId = 'upload-'+field+'-'+r.personType+'-'+r.personId;
-  const label = field==='photo_url' ? 'Photo' : 'Membership card';
-  const viewTitle = (r.name+' — '+label).replace(/'/g,"\\'");
   return `<td>
     <div style="display:flex;align-items:center;gap:6px;">
-      ${path ? `<img data-signed-path="${esc(path)}" style="width:28px;height:28px;border-radius:${field==='photo_url'?'50%':'4px'};object-fit:cover;background:var(--rule-light);cursor:pointer;" onclick="openViewFileModal('${path}','${viewTitle}')">` : `<span style="opacity:0.4;font-size:11px;">—</span>`}
-      ${path ? `<a href="#" onclick="openViewFileModal('${path}','${viewTitle}');return false;" style="font-size:11px;color:var(--ink);opacity:0.75;">View</a>` : ''}
+      ${path ? `<img data-signed-path="${esc(path)}" style="width:28px;height:28px;border-radius:${field==='photo_url'?'50%':'4px'};object-fit:cover;background:var(--rule-light);cursor:pointer;" onclick="openViewFileForGroupMember('${g.id}','${r.personType}','${r.personId}','${field}')">` : `<span style="opacity:0.4;font-size:11px;">—</span>`}
+      ${path ? `<a href="#" onclick="openViewFileForGroupMember('${g.id}','${r.personType}','${r.personId}','${field}');return false;" style="font-size:11px;color:var(--ink);opacity:0.75;">View</a>` : ''}
       ${canEdit ? `<label for="${inputId}" style="cursor:pointer;font-size:11px;color:var(--brass);font-weight:600;">${path?'Replace':'Add'}</label>
       <input id="${inputId}" type="file" accept="image/*" style="display:none;" onchange="uploadGroupMemberFile('${g.id}','${r.personType}','${r.personId}','${field}',this.files[0])">` : ''}
     </div>
   </td>`;
 }
-function openViewFileModal(path, title){
+function openViewFileForGroupMember(groupId, personType, personId, field){
+  const r = groupRosterFor(groupId).find(x=>x.personType===personType && x.personId===personId);
+  if(!r || !r.gm[field]) return;
+  const label = field==='photo_url' ? 'Photo' : 'Membership card';
   UI.modal = 'viewFile';
-  UI.modalProps = { path, title };
+  UI.modalProps = { path: r.gm[field], title: r.name+' — '+label };
   render();
 }
 function viewFileModalBody(){
