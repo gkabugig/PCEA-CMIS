@@ -264,7 +264,7 @@ const MODULE_SHOWCASE = [
   {icon:'book', color:'blue', name:'Service Book & Attendance', desc:'Track services, attendance and giving.'},
   {icon:'heartHand', color:'wine', name:'Pastoral Care', desc:'Support, visit and follow up on needs.'},
   {icon:'calendar', color:'navy', name:'Events & Calendar', desc:'Manage church events, meetings and activities.'},
-  {icon:'coins', color:'brass', name:'Finance & Giving', desc:'Record offerings, manage funds and view reports.'},
+  {icon:'coins', color:'brass', name:'Finances', desc:'Record offerings, manage funds and view reports.'},
   {icon:'chat', color:'plum', name:'Communication', desc:'Reach your church family effectively.'},
   {icon:'chartDoc', color:'teal', name:'Reports & Insights', desc:'Make informed decisions with real data.'},
   {icon:'shield', color:'navy', name:'Users & Security', desc:'Control access and keep your data safe.'}
@@ -728,7 +728,7 @@ const NAV_ITEMS = [
   {key:'followups', label:'Pastoral Care'},
   {key:'servicebook', label:'Service Attendance'},
   {key:'events', label:'Events & Calendar'},
-  {key:'finance', label:'Finance & Giving'},
+  {key:'finance', label:'Finances'},
   {key:'communication', label:'Communication'},
   {key:'reports', label:'Reports'},
   {key:'users', label:'Users, Roles & Audit'}
@@ -1695,7 +1695,7 @@ function renderFinance(){
   const fin = financeSummary();
   const obligations = obligationsList();
   return `
-    ${sectionHeader('Finance & Giving', 'KES '+fin.total.toLocaleString()+' total collections recorded')}
+    ${sectionHeader('Finances', 'KES '+fin.total.toLocaleString()+' total collections recorded')}
     ${renderCollectionSummary()}
 
     <div class="card" style="margin-bottom:24px;max-width:560px;">
