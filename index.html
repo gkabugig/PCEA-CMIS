@@ -985,7 +985,7 @@ function openVisitorModal(id){
   UI.modalProps = editing ? {
     id, name:editing.name, visited:editing.visited, referralType:editing.referral_type, referralName:editing.referral_name,
     contact:editing.contact, nextFollowUp:editing.next_follow_up||''
-  } : { id:null, name:'', visited:new Date().toISOString().slice(0,10), referralType:'Walk-in', referralName:'', contact:'', nextFollowUp:'' };
+  } : { id:null, name:'', visited:new Date().toISOString().slice(0,10), referralType:'Walk-in', referralName:'', contact:'', nextFollowUp:'', contactNote:'' };
   UI.modalErrors = {};
   render();
 }
@@ -1002,9 +1002,13 @@ async function saveVisitorModal(){
       await logAudit('Updated visitor', p.name.trim());
       showToast('Visitor updated.');
     }else{
-      const { error } = await sb.from('mis_visitors').insert({...payload, status:'Pending'});
+      const { data, error } = await sb.from('mis_visitors').insert({...payload, status:'Pending'}).select().single();
       if(error){ showToast('Could not save: '+error.message); return; }
       await logAudit('Logged visitor', p.name.trim());
+      if(p.contactNote && p.contactNote.trim()){
+        await sb.from('mis_visitor_contacts').insert({visitor_id:data.id, contact_date:p.visited, by_name:ME.name, note:p.contactNote.trim()});
+        await refetch('visitorContacts');
+      }
       showToast('Visitor logged.');
     }
     await refetch('visitors');
@@ -1049,6 +1053,7 @@ function visitorModalBody(){
     ${p.referralType!=='Walk-in' ? field(p.referralType==='Member'?'Member name':'Group name', `<input class="field-input" value="${esc(p.referralName)}" oninput="setModalPropQuiet('referralName',this.value)">`) : ''}
     ${field('Contact', `<input class="field-input" placeholder="+254 7XX XXX XXX" value="${esc(p.contact)}" oninput="setModalPropQuiet('contact',this.value)">`)}
     ${field('Next follow-up date (optional)', `<input type="date" class="field-input" value="${p.nextFollowUp||''}" onchange="setModalProp('nextFollowUp',this.value)">`)}
+    ${!p.id ? field('Note from this visit (optional)', `<textarea class="field-input" rows="3" placeholder="What was discussed / outcome of this visit..." oninput="setModalPropQuiet('contactNote',this.value)">${esc(p.contactNote)}</textarea>`) : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="saveVisitorModal()">${p.id?'Save changes':'Log visitor'}</button>
