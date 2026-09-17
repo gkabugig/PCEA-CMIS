@@ -2079,6 +2079,11 @@ function groupById(id){ return STATE.groups.find(g=>g.id===id); }
 function groupName(id){ const g = groupById(id); return g ? g.name : ''; }
 function elderForDistrict(id){ const d = STATE.districts.find(x=>x.id===id); return d ? d.elder_name : '—'; }
 function totalPeopleCount(){ return STATE.members.length + STATE.households.length; }
+// A "household" is the family unit — a member plus whichever dependants
+// are linked to them, counted once — not a headcount of the dependant
+// records themselves. Two dependants under the same member is still 1
+// household, not 2.
+function householdUnitsCount(){ return new Set(STATE.households.map(h=>h.owner_member_id)).size; }
 function totalGroupsCount(){ return STATE.groups.length; }
 function groupRosterFor(groupId){
   return STATE.groupMembers.filter(gm=>gm.group_id===groupId).map(gm=>{
@@ -2144,7 +2149,7 @@ function renderDashboard(){
         <div style="font-size:12px;opacity:0.6;margin-bottom:6px;">Total people</div>
         <div style="display:flex;gap:18px;">
           <div><div class="stat-num" style="font-size:26px;">${STATE.members.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">members</div></div>
-          <div><div class="stat-num" style="font-size:26px;">${STATE.households.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">households</div></div>
+          <div><div class="stat-num" style="font-size:26px;">${householdUnitsCount().toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">households</div></div>
         </div>
       </div>
       ${statCard('Districts & Groups', STATE.districts.length+' / '+groups, 'Districts / active groups', 'groups')}
@@ -2613,8 +2618,9 @@ function renderDistrictSummary(){
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;">
       ${dists.map(d=>{
         const list = STATE.members.filter(m=>m.district_id===d.id);
-        const householdCount = list.reduce((a,m)=>a+householdsFor(m.id).length,0);
-        const totalPeople = list.length + householdCount;
+        const dependantCount = list.reduce((a,m)=>a+householdsFor(m.id).length,0);
+        const householdCount = list.filter(m=>householdsFor(m.id).length>0).length;
+        const totalPeople = list.length + dependantCount;
         return `<div class="card" style="cursor:pointer;" ondblclick="setUI({selectedDistrict:'${d.id}'})">
           <div style="font-family:var(--font-serif);font-size:17px;margin-bottom:4px;">${esc(d.name)}</div>
           <div style="font-size:12.5px;opacity:0.65;margin-bottom:14px;">Elder ${esc(d.elder_name||'—')}</div>
@@ -2789,7 +2795,7 @@ function openMemberModal(id){
   UI.modal='member';
   UI.modalProps = editing
     ? {id, name:editing.name, status:editing.status, district_id:editing.district_id, gender:editing.gender, phone:editing.phone, residence:editing.residence||''}
-    : {id:null, name:'', status:'Communicant Member', district_id: UI.selectedDistrict||(STATE.districts[0]||{}).id, gender:'Male', phone:'', residence:''};
+    : {id:null, name:'', status:'Communicant Member', district_id: UI.selectedDistrict||(STATE.districts[0]||{}).id, gender:'Male', phone:'', residence:'', groupId:''};
   UI.modalErrors = {};
   render();
 }
@@ -2806,9 +2812,13 @@ async function saveMemberModal(){
       await logAudit('Updated member', p.name.trim());
       showToast('Member updated.');
     }else{
-      const { error } = await sb.from('mis_members').insert({...payload, since:String(new Date().getFullYear())});
+      const { data, error } = await sb.from('mis_members').insert({...payload, since:String(new Date().getFullYear())}).select().single();
       if(error){ showToast('Could not save: '+error.message); return; }
       await logAudit('Added member', p.name.trim());
+      if(p.groupId){
+        const { error: gErr } = await sb.from('mis_group_members').insert({group_id:p.groupId, person_type:'member', person_id:data.id});
+        if(!gErr) await refetch('groupMembers');
+      }
       showToast('Member added.');
     }
     await refetch('members');
@@ -2820,7 +2830,7 @@ function openHouseholdModal(memberId, hId){
   UI.modal='household';
   UI.modalProps = editing
     ? {memberId, hId, name:editing.name, relationship:editing.relationship, status:editing.status, phone:editing.phone, age_group:editing.age_group, gender:editing.gender}
-    : {memberId, hId:null, name:'', relationship:'', status:'Adherent', phone:'', age_group:'Adult', gender:'Male'};
+    : {memberId, hId:null, name:'', relationship:'', status:'Adherent', phone:'', age_group:'Adult', gender:'Male', groupId:''};
   UI.modalErrors = {};
   render();
 }
@@ -2835,8 +2845,12 @@ async function saveHouseholdModal(){
       const { error } = await sb.from('mis_households').update(payload).eq('id', p.hId);
       if(error){ showToast('Could not save: '+error.message); return; }
     }else{
-      const { error } = await sb.from('mis_households').insert({...payload, since:String(new Date().getFullYear())});
+      const { data, error } = await sb.from('mis_households').insert({...payload, since:String(new Date().getFullYear())}).select().single();
       if(error){ showToast('Could not save: '+error.message); return; }
+      if(p.groupId){
+        const { error: gErr } = await sb.from('mis_group_members').insert({group_id:p.groupId, person_type:'household', person_id:data.id});
+        if(!gErr) await refetch('groupMembers');
+      }
     }
     await logAudit(p.hId?'Updated household member':'Added household member', p.name.trim());
     await refetch('households');
@@ -3150,7 +3164,8 @@ function memberModalBody(){
     ${field('District', `<select class="field-input" onchange="setModalProp('district_id',this.value)">${STATE.districts.map(d=>`<option value="${d.id}" ${p.district_id===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select>`, e.district_id)}
     <div style="font-size:11.5px;opacity:0.6;margin:-8px 0 14px;">Elder: ${esc(elderForDistrict(p.district_id))} (resolved automatically from the district)</div>
     ${field('Residence', `<input class="field-input" value="${esc(p.residence)}" oninput="setModalPropQuiet('residence',this.value)">`)}
-    <div style="font-size:11.5px;opacity:0.6;margin:-8px 0 14px;">Group membership is managed from this member's own page, or from a group's page under Districts &amp; Groups — either way, a member can belong to more than one group.</div>
+    ${p.id ? `<div style="font-size:11.5px;opacity:0.6;margin:-8px 0 14px;">Group membership is managed from this member's own page, or from a group's page under Districts &amp; Groups — either way, a member can belong to more than one group.</div>`
+      : field('Add to a group (optional)', `<select class="field-input" onchange="setModalProp('groupId',this.value)"><option value="">None for now</option>${STATE.groups.map(g=>`<option value="${g.id}" ${p.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`)}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="saveMemberModal()">${p.id?'Save changes':'Add member'}</button>
@@ -3168,6 +3183,7 @@ function householdModalBody(){
     </div>
     ${field('Standing', `<select class="field-input" onchange="setModalProp('status',this.value)">${STATUS_OPTIONS.map(o=>`<option ${p.status===o?'selected':''}>${o}</option>`).join('')}</select>`)}
     ${field('Phone', `<input class="field-input" placeholder="+254 7XX XXX XXX" value="${esc(p.phone)}" oninput="setModalPropQuiet('phone',this.value)">`)}
+    ${!p.hId ? field('Add to a group (optional)', `<select class="field-input" onchange="setModalProp('groupId',this.value)"><option value="">None for now</option>${STATE.groups.map(g=>`<option value="${g.id}" ${p.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`) : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
       <button class="btn" onclick="saveHouseholdModal()">${p.hId?'Save changes':'Add'}</button>
