@@ -544,11 +544,46 @@ function renderSignInScreen(err){
     </div>
     <button class="landing-btn" onclick="submitSignIn()">Sign In ${icon('arrowRight',17)}</button>
     <div style="font-size:11px;opacity:0.6;margin-top:10px;text-align:center;">New user? Contact the Church Administrator</div>
+    <div style="font-size:11px;margin-top:8px;text-align:center;"><a href="#" class="landing-link" onclick="renderChangePasswordScreen();return false;">Change my password</a></div>
   `);
   const el = document.getElementById('siUsername'); if(el) el.focus();
 }
 function forgotPasswordNote(){
   showToast('Ask a System Administrator to reset it from Users, Roles & Audit.');
+}
+function renderChangePasswordScreen(err){
+  paintLandingScreen(`
+    <h2>Change My Password</h2>
+    <p class="landing-card-sub">Enter your username and current password, then choose a new one.</p>
+    ${err?`<div class="field-err" style="margin-bottom:14px;">${esc(err)}</div>`:''}
+    ${landingTextField('cpUsername','Username','user','Your username')}
+    ${landingPasswordField('cpCurrentPass','Current password', null)}
+    ${landingPasswordField('cpNewPass1','New password (at least 8 characters)', null)}
+    ${landingPasswordField('cpNewPass2','Confirm new password', "submitChangePasswordFromLanding()")}
+    <button class="landing-btn" onclick="submitChangePasswordFromLanding()">Change Password ${icon('arrowRight',17)}</button>
+    <div style="font-size:11px;margin-top:14px;text-align:center;"><a href="#" class="landing-link" onclick="renderSignInScreen();return false;">← Back to sign in</a></div>
+  `);
+  const el = document.getElementById('cpUsername'); if(el) el.focus();
+}
+async function submitChangePasswordFromLanding(){
+  const username = document.getElementById('cpUsername').value.trim();
+  const currentPass = document.getElementById('cpCurrentPass').value;
+  const newPass1 = document.getElementById('cpNewPass1').value;
+  const newPass2 = document.getElementById('cpNewPass2').value;
+  if(!username || !currentPass){ renderChangePasswordScreen('Enter your username and current password.'); return; }
+  if(newPass1.length<8){ renderChangePasswordScreen('Use a new password of at least 8 characters.'); return; }
+  if(newPass1!==newPass2){ renderChangePasswordScreen('New passwords do not match.'); return; }
+  document.body.classList.add('app-busy');
+  try{
+    const { error: signInErr } = await sb.auth.signInWithPassword({ email: deriveEmail(username), password: currentPass });
+    if(signInErr){ renderChangePasswordScreen('Incorrect username or current password.'); return; }
+    const { error: updateErr } = await sb.auth.updateUser({ password: newPass1 });
+    if(updateErr){ await sb.auth.signOut(); renderChangePasswordScreen(updateErr.message); return; }
+    await logAudit('Changed own password', '');
+    showToast('Password changed — signing you in.');
+    const ok = await afterSignIn();
+    if(!ok) renderSignInScreen('Password changed. Your account is not active — ask a System Administrator for help.');
+  } finally { document.body.classList.remove('app-busy'); }
 }
 async function submitSignIn(){
   const username = document.getElementById('siUsername').value.trim();
@@ -796,8 +831,7 @@ function render(){
       <div style="padding:0 24px 16px;border-bottom:1px solid var(--rule);margin-bottom:12px;padding-bottom:16px;">
         <div style="font-size:11px;color:var(--charcoal);opacity:0.55;letter-spacing:0.04em;margin-bottom:4px;">SIGNED IN AS</div>
         <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${esc(ME.name)}</div>
-        <div style="font-size:12px;opacity:0.65;margin-bottom:10px;">${esc(role)}${esc(scopeNote)}</div>
-        <button class="btn-ghost" style="width:100%;" onclick="changeMyPassword()">Change my password</button>
+        <div style="font-size:12px;opacity:0.65;">${esc(role)}${esc(scopeNote)}</div>
       </div>
       <nav style="flex:1;padding:0 16px;display:flex;flex-direction:column;">
         <div style="flex:1;">
@@ -2229,7 +2263,6 @@ function renderDistrictsTab(){
         </div>`;
       }).join('')}
     </div>
-    <div style="font-size:11.5px;opacity:0.55;margin-top:14px;">Each district can carry up to ${MAX_DEACONS_PER_DISTRICT} Deacons. Renaming a district here updates it everywhere instantly — members, users and everything else reference it by ID, not by name.</div>
   `;
 }
 function openDistrictModal(id){
@@ -3041,27 +3074,6 @@ async function submitResetPassword(){
     }
   });
 }
-async function changeMyPassword(){
-  UI.modal='changeMyPassword';
-  UI.modalProps = {pass1:'', pass2:''};
-  UI.modalErrors = {};
-  render();
-}
-async function submitChangeMyPassword(){
-  const p = UI.modalProps;
-  const errs = {};
-  if(p.pass1.length<8) errs.pass1 = 'Use at least 8 characters.';
-  if(p.pass1!==p.pass2) errs.pass2 = 'Passwords do not match.';
-  UI.modalErrors = errs;
-  if(Object.keys(errs).length){ render(); return; }
-  await withBusyState(async ()=>{
-    const { error } = await sb.auth.updateUser({ password: p.pass1 });
-    if(error){ UI.modalErrors={pass1:error.message}; render(); return; }
-    await logAudit('Changed own password', '');
-    UI.modal=null; render();
-    showToast('Password changed.');
-  });
-}
 
 
 /* ---------------------------------------------------------------------
@@ -3078,7 +3090,6 @@ function renderModalHost(){
   else if(UI.modal==='roleHolder') body = roleHolderModalBody();
   else if(UI.modal==='createLogin') body = createLoginModalBody();
   else if(UI.modal==='resetPassword') body = resetPasswordModalBody();
-  else if(UI.modal==='changeMyPassword') body = changeMyPasswordModalBody();
   else if(UI.modal==='visitor') body = visitorModalBody();
   else if(UI.modal==='visitorFollowUp') body = visitorFollowUpModalBody();
   else if(UI.modal==='service') body = serviceModalBody();
@@ -3223,18 +3234,6 @@ function resetPasswordModalBody(){
       <button class="btn" onclick="submitResetPassword()">Reset password</button>
     </div>`;
 }
-function changeMyPasswordModalBody(){
-  const p = UI.modalProps, e = UI.modalErrors||{};
-  return `
-    <h2 style="font-size:19px;margin-bottom:18px;">Change my password</h2>
-    ${field('New password (at least 8 characters)', `<input type="password" class="field-input" value="${esc(p.pass1)}" oninput="setModalPropQuiet('pass1',this.value)">`, e.pass1)}
-    ${field('Confirm password', `<input type="password" class="field-input" value="${esc(p.pass2)}" oninput="setModalPropQuiet('pass2',this.value)">`, e.pass2)}
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
-      <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
-      <button class="btn" onclick="submitChangeMyPassword()">Change password</button>
-    </div>`;
-}
-
 boot();
 
 
