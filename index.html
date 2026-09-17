@@ -726,7 +726,7 @@ const NAV_ITEMS = [
   {key:'groups', label:'Districts & Groups'},
   {key:'visitors', label:'Visitors & Follow-up'},
   {key:'followups', label:'Pastoral Care'},
-  {key:'servicebook', label:'Worship & Attendance'},
+  {key:'servicebook', label:'Service Attendance'},
   {key:'events', label:'Events & Calendar'},
   {key:'finance', label:'Finance & Giving'},
   {key:'communication', label:'Communication'},
@@ -859,6 +859,47 @@ function render(){
       if(selStart!=null){ try{ match.setSelectionRange(selStart, selEnd); }catch(e){} }
     }
   }
+  hydrateSignedUrls();
+}
+
+// group-member-files is a private bucket, so every photo/card thumbnail is
+// shown via a short-lived signed URL rather than a public path. Signed URLs
+// are cached per storage path (well under their 1hr expiry) and patched
+// into <img> tags after each render, instead of re-rendering, since a full
+// render() would refetch and re-flicker the whole page for an image load.
+const SIGNED_URL_CACHE = new Map();
+async function getSignedFileUrl(path){
+  if(!path) return null;
+  const cached = SIGNED_URL_CACHE.get(path);
+  if(cached && cached.expiresAt > Date.now()+60000) return cached.url;
+  const { data, error } = await sb.storage.from('group-member-files').createSignedUrl(path, 3600);
+  if(error || !data) return null;
+  SIGNED_URL_CACHE.set(path, { url: data.signedUrl, expiresAt: Date.now()+3600*1000 });
+  return data.signedUrl;
+}
+function hydrateSignedUrls(){
+  document.querySelectorAll('img[data-signed-path]').forEach(img=>{
+    const path = img.getAttribute('data-signed-path');
+    if(!path) return;
+    getSignedFileUrl(path).then(url=>{ if(url) img.src = url; });
+  });
+}
+async function uploadGroupMemberFile(groupId, personType, personId, field, file){
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Please choose an image file.'); return; }
+  await withBusyState(async ()=>{
+    const ext = (file.name.split('.').pop()||'jpg').toLowerCase();
+    const path = `${groupId}/${personType}-${personId}-${field}-${Date.now()}.${ext}`;
+    const { error: upErr } = await sb.storage.from('group-member-files').upload(path, file, { contentType: file.type });
+    if(upErr){ showToast('Could not upload: '+upErr.message); return; }
+    const oldPath = (groupRosterFor(groupId).find(r=>r.personType===personType && r.personId===personId)||{}).gm[field];
+    const { error } = await sb.from('mis_group_members').update({[field]:path}).eq('group_id',groupId).eq('person_type',personType).eq('person_id',personId);
+    if(error){ showToast('Could not save: '+error.message); return; }
+    if(oldPath) await sb.storage.from('group-member-files').remove([oldPath]);
+    await refetch('groupMembers');
+    render();
+    showToast((field==='photo_url'?'Photo':'Membership card')+' uploaded.');
+  });
 }
 
 function renderView(){
@@ -1078,7 +1119,7 @@ function renderServiceDaySummary(){
   const trend = [...days].sort((a,b)=>new Date(a.date)-new Date(b.date)).slice(-8);
   const maxAttendance = Math.max(...trend.map(d=>d.attendance),1);
   return `
-    ${sectionHeader('Worship & Attendance', null, canEdit ? `<button class="btn" onclick="openServiceModal(null)">Log a service</button>` : '')}
+    ${sectionHeader('Service Attendance', null, canEdit ? `<button class="btn" onclick="openServiceModal(null)">Log a service</button>` : '')}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:18px;max-width:520px;">
       ${statCard('Days recorded', days.length, days.length===1?'day':'days')}
       ${statCard('Holy Communion', overallHC.services, overallHC.services===1?'service':'services')}
@@ -2369,17 +2410,28 @@ function renderOfficialsCard(g, roster, canEdit){
     </div>
   `;
 }
+function fileThumbCell(g, r, field, canEdit){
+  const path = r.gm[field];
+  const inputId = 'upload-'+field+'-'+r.personType+'-'+r.personId;
+  return `<td>
+    <div style="display:flex;align-items:center;gap:6px;">
+      ${path ? `<img data-signed-path="${esc(path)}" style="width:28px;height:28px;border-radius:${field==='photo_url'?'50%':'4px'};object-fit:cover;background:var(--rule-light);">` : `<span style="opacity:0.4;font-size:11px;">—</span>`}
+      ${canEdit ? `<label for="${inputId}" style="cursor:pointer;font-size:11px;color:var(--brass);font-weight:600;">${path?'Replace':'Add'}</label>
+      <input id="${inputId}" type="file" accept="image/*" style="display:none;" onchange="uploadGroupMemberFile('${g.id}','${r.personType}','${r.personId}','${field}',this.files[0])">` : ''}
+    </div>
+  </td>`;
+}
 function renderGroupMembersTab(g, roster, canEdit){
   const hasCardFields = CARD_GROUPS.includes(g.name);
   return `
     ${UI.focusName ? `<div class="banner">Showing only ${esc(UI.focusName)}. <a href="#" onclick="setUI({focusName:null});return false;" style="color:var(--brass);">Show full roster</a></div>` : ''}
     ${canEdit ? renderAddToRoster(g) : ''}
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>District</th><th>Phone</th>${canEdit?'<th></th>':''}</tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>District</th><th>Phone</th>${hasCardFields?'<th>Photo</th><th>Membership card</th>':''}${canEdit?'<th></th>':''}</tr></thead><tbody>
     ${roster.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.districtName||'—')}</td><td>${esc(r.phone||'—')}</td>
+      ${hasCardFields ? fileThumbCell(g,r,'photo_url',canEdit)+fileThumbCell(g,r,'card_image',canEdit) : ''}
       ${canEdit ? `<td><button class="btn-danger" style="padding:4px 9px;font-size:11.5px;" onclick="removeFromRoster('${g.id}','${r.personType}','${r.personId}')">Remove</button></td>` : ''}
-    </tr>`).join('') || `<tr><td colspan="${canEdit?4:3}" style="opacity:0.6;">No one is currently assigned to this group.</td></tr>`}
+    </tr>`).join('') || `<tr><td colspan="${(hasCardFields?2:0)+(canEdit?4:3)}" style="opacity:0.6;">No one is currently assigned to this group.</td></tr>`}
     </tbody></table></div>
-    ${hasCardFields ? `<div style="font-size:11.5px;opacity:0.55;margin-top:10px;">Member cards (member number, photo, brigade standing) aren't moved over to the shared database yet.</div>` : ''}
   `;
 }
 function renderAddToRoster(g){
