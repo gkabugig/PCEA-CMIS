@@ -2237,7 +2237,6 @@ function renderDashboard(){
   const todayISO = new Date().toISOString().slice(0,10);
   const events = STATE.events.filter(e=>e.event_date >= todayISO).length;
   const showFinance = canSeeFinance();
-  const showComms = canSeeCommunication();
   const showPastoral = canSeeFollowups();
   const fin = showFinance ? financeSummary() : null;
   return `
@@ -2276,15 +2275,6 @@ function renderDashboard(){
         <div style="text-align:right;margin-top:10px;"><a href="#" onclick="setUI({view:'followups'});return false;" style="font-size:12.5px;color:var(--brass);">View all →</a></div>
       </div>` : ''}
     </div>
-    ${showComms ? `<div class="card" style="max-width:640px;">
-      <h3 style="font-size:15px;margin-bottom:14px;">Recent communications</h3>
-      ${[...STATE.communications].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,4).map(c=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--rule-light);font-size:13px;gap:8px;flex-wrap:wrap;">
-          <span>${esc(c.channel)} to ${esc(c.audience_label)} <span style="opacity:0.6;">— ${esc((c.message||'').slice(0,40))}${(c.message||'').length>40?'…':''}</span></span>
-          <span style="opacity:0.55;font-size:12px;">${fmtDate(c.created_at.slice(0,10))}</span>
-        </div>`).join('') || '<div style="font-size:13px;opacity:0.6;">Nothing logged yet.</div>'}
-      <div style="text-align:right;margin-top:10px;"><a href="#" onclick="setUI({view:'communication'});return false;" style="font-size:12.5px;color:var(--brass);">View all →</a></div>
-    </div>` : ''}
   `;
 }
 
@@ -2469,13 +2459,32 @@ function renderOfficialsCard(g, roster, canEdit){
 function fileThumbCell(g, r, field, canEdit){
   const path = r.gm[field];
   const inputId = 'upload-'+field+'-'+r.personType+'-'+r.personId;
+  const label = field==='photo_url' ? 'Photo' : 'Membership card';
+  const viewTitle = (r.name+' — '+label).replace(/'/g,"\\'");
   return `<td>
     <div style="display:flex;align-items:center;gap:6px;">
-      ${path ? `<img data-signed-path="${esc(path)}" style="width:28px;height:28px;border-radius:${field==='photo_url'?'50%':'4px'};object-fit:cover;background:var(--rule-light);">` : `<span style="opacity:0.4;font-size:11px;">—</span>`}
+      ${path ? `<img data-signed-path="${esc(path)}" style="width:28px;height:28px;border-radius:${field==='photo_url'?'50%':'4px'};object-fit:cover;background:var(--rule-light);cursor:pointer;" onclick="openViewFileModal('${path}','${viewTitle}')">` : `<span style="opacity:0.4;font-size:11px;">—</span>`}
+      ${path ? `<a href="#" onclick="openViewFileModal('${path}','${viewTitle}');return false;" style="font-size:11px;color:var(--ink);opacity:0.75;">View</a>` : ''}
       ${canEdit ? `<label for="${inputId}" style="cursor:pointer;font-size:11px;color:var(--brass);font-weight:600;">${path?'Replace':'Add'}</label>
       <input id="${inputId}" type="file" accept="image/*" style="display:none;" onchange="uploadGroupMemberFile('${g.id}','${r.personType}','${r.personId}','${field}',this.files[0])">` : ''}
     </div>
   </td>`;
+}
+function openViewFileModal(path, title){
+  UI.modal = 'viewFile';
+  UI.modalProps = { path, title };
+  render();
+}
+function viewFileModalBody(){
+  const p = UI.modalProps;
+  return `
+    <h2 style="font-size:16px;margin-bottom:14px;">${esc(p.title)}</h2>
+    <div style="display:flex;justify-content:center;align-items:center;background:var(--rule-light);border-radius:8px;padding:12px;min-height:200px;">
+      <img data-signed-path="${esc(p.path)}" style="max-width:100%;max-height:60vh;border-radius:6px;object-fit:contain;">
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+      <button class="btn-ghost" onclick="setUI({modal:null})">Close</button>
+    </div>`;
 }
 function renderGroupMembersTab(g, roster, canEdit){
   const hasCardFields = CARD_GROUPS.includes(g.name);
@@ -3206,6 +3215,7 @@ function renderModalHost(){
   else if(UI.modal==='template') body = templateModalBody();
   else if(UI.modal==='reportView') body = reportViewModalBody();
   else if(UI.modal==='userActivity') body = userActivityModalBody();
+  else if(UI.modal==='viewFile') body = viewFileModalBody();
   return `<div class="modal-backdrop" onclick="setUI({modal:null})"><div class="modal" onclick="event.stopPropagation()">${body}</div></div>`;
 }
 function districtModalBody(){
