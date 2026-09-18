@@ -2334,23 +2334,13 @@ function monthlyServiceAttendance(){
   });
   return months;
 }
-function attendanceLineChart(){
+function attendanceBarChart(){
   const months = monthlyServiceAttendance();
   const monthLabels = Array.from({length:12},(_,i)=>new Date(2000,i,1).toLocaleDateString('en-KE',{month:'short'}));
   const totals = months.map(m=>SERVICE_TYPES.reduce((a,t)=>a+m[t],0));
-  const overallMax = Math.max(...totals, 1);
+  const max = Math.max(...totals, 1);
   const peakIdx = totals.indexOf(Math.max(...totals));
-  const vbW = 600, vbH = 110, padL = 6, padR = 6, padT = 10, padB = 8;
-  const plotW = vbW-padL-padR, plotH = vbH-padT-padB;
-  const x = i => padL + i*(plotW/(monthLabels.length-1));
-  const y = v => padT+plotH - (v/overallMax*plotH);
-  const lines = SERVICE_TYPES.map(t=>{
-    const pts = months.map((m,i)=>({x:x(i), y:y(m[t]), v:m[t]}));
-    const path = pts.map((p,i)=>(i===0?'M':'L')+p.x.toFixed(1)+','+p.y.toFixed(1)).join(' ');
-    const color = SERVICE_TYPE_COLORS[t]||'#898781';
-    const dots = pts.map((p,i)=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.6" fill="${color}"><title>${esc(t)}: ${p.v} — ${esc(monthLabels[i])}</title></circle>`).join('');
-    return `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}`;
-  }).join('');
+  const chartH = 90;
   return `
     <div style="font-size:11px;opacity:0.6;margin-bottom:6px;">
       ${Math.max(...totals)>0 ? `Peak month: ${esc(monthLabels[peakIdx])} — ${Math.max(...totals).toLocaleString()} total attendance` : 'No attendance recorded yet this year.'}
@@ -2358,9 +2348,21 @@ function attendanceLineChart(){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
       ${SERVICE_TYPES.map(t=>`<span style="display:flex;align-items:center;gap:5px;font-size:11px;"><span style="width:9px;height:9px;border-radius:2px;background:${SERVICE_TYPE_COLORS[t]||'#898781'};display:inline-block;flex-shrink:0;"></span>${esc(t)}</span>`).join('')}
     </div>
-    <svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="none" width="100%" height="90" style="display:block;">${lines}</svg>
-    <div style="display:flex;margin-top:4px;">
-      ${monthLabels.map(m=>`<div style="flex:1;text-align:center;font-size:9.5px;opacity:0.55;white-space:nowrap;">${esc(m)}</div>`).join('')}
+    <div style="display:flex;align-items:flex-end;gap:6px;height:${chartH}px;">
+      ${months.map((m,i)=>{
+        const segs = SERVICE_TYPES.map(t=>{
+          const v = m[t];
+          if(v<=0) return '';
+          const hPct = (v/max*100);
+          return `<div style="width:100%;height:${hPct}%;background:${SERVICE_TYPE_COLORS[t]||'#898781'};" title="${esc(t)}: ${v} — ${esc(monthLabels[i])}"></div>`;
+        }).join('');
+        return `<div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%;flex:1;min-width:0;" title="${esc(monthLabels[i])} — ${totals[i].toLocaleString()} total">
+          ${segs || `<div style="width:100%;height:2px;background:var(--rule-light);"></div>`}
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:6px;margin-top:4px;">
+      ${monthLabels.map(m=>`<div style="flex:1;text-align:center;font-size:9.5px;opacity:0.55;white-space:nowrap;min-width:0;">${esc(m)}</div>`).join('')}
     </div>
   `;
 }
@@ -2412,7 +2414,7 @@ function renderDashboard(){
     </div>
     ${canSeeServiceBook() ? `<div class="card" style="padding:14px;">
       <h3 style="font-size:14px;margin-bottom:8px;">Service attendance — by month, ${new Date().getFullYear()}</h3>
-      ${attendanceLineChart()}
+      ${attendanceBarChart()}
       <div style="text-align:right;margin-top:6px;"><a href="#" onclick="setUI({view:'servicebook'});return false;" style="font-size:12.5px;color:var(--brass);">View Service Attendance →</a></div>
     </div>` : ''}
   `;
