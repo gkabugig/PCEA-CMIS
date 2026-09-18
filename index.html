@@ -2139,12 +2139,42 @@ function statCard(label,value,hint,viewKey){
   const attrs = clickable ? `onclick="setUI({view:'${viewKey}'})" style="cursor:pointer;" role="link" tabindex="0" onkeydown="if(event.key==='Enter')setUI({view:'${viewKey}'})"` : '';
   return `<div class="card" ${attrs}><div style="font-size:12px;opacity:0.6;margin-bottom:6px;">${esc(label)}</div><div class="stat-num">${value}</div><div style="font-size:11.5px;opacity:0.55;margin-top:4px;">${esc(hint)}</div></div>`;
 }
-function barRow(label,val,max){
-  const pct = max>0 ? Math.round(val/max*100) : 0;
-  return `<div style="margin-bottom:12px;">
-    <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span>${esc(label)}</span><span>${fmtKES(val)}</span></div>
-    <div style="background:var(--rule-light);height:6px;border-radius:3px;overflow:hidden;"><div style="background:var(--brass);width:${pct}%;height:100%;"></div></div>
-  </div>`;
+function financeDonutChart(fin){
+  const segments = [
+    {label:'Sunday offertory', value:fin.sunday, color:'#2A78D6'},
+    {label:'Groups & districts', value:fin.group, color:'#C9860F'},
+    {label:'Development fund', value:fin.dev, color:'#0D9488'}
+  ];
+  const total = segments.reduce((a,s)=>a+s.value,0);
+  const size = 148, r = 56, cx = size/2, cy = size/2, sw = 20, circumference = 2*Math.PI*r;
+  let cursor = 0;
+  const arcs = total>0 ? segments.filter(s=>s.value>0).map(s=>{
+    const frac = s.value/total;
+    const dash = Math.max(frac*circumference-2, 0);
+    const rotation = (cursor/total)*360 - 90;
+    cursor += s.value;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${sw}" stroke-dasharray="${dash} ${circumference-dash}" transform="rotate(${rotation} ${cx} ${cy})"><title>${esc(s.label)}: ${fmtKES(s.value)} (${Math.round(frac*100)}%)</title></circle>`;
+  }).join('') : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--rule-light)" stroke-width="${sw}"></circle>`;
+  return `
+    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;">
+      <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;">
+        <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${arcs}</svg>
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+          <div style="font-size:10.5px;opacity:0.6;">Total</div>
+          <div style="font-size:14px;font-weight:600;line-height:1.25;">${fmtKES(total)}</div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:170px;">
+        ${segments.map(s=>{
+          const pct = total>0 ? Math.round(s.value/total*100) : 0;
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0;font-size:12.5px;">
+            <span style="display:flex;align-items:center;gap:7px;"><span style="width:10px;height:10px;border-radius:50%;background:${s.color};display:inline-block;flex-shrink:0;"></span>${esc(s.label)}</span>
+            <span style="text-align:right;white-space:nowrap;"><strong>${fmtKES(s.value)}</strong> <span style="opacity:0.55;">${pct}%</span></span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 function trendBarRow(label,val,max,unit){
   const pct = max>0 ? Math.round(val/max*100) : 0;
@@ -2256,13 +2286,8 @@ function renderDashboard(){
     </div>
     <div style="display:grid;grid-template-columns:${showFinance?'repeat(auto-fit,minmax(300px,1fr))':'1fr'};gap:20px;margin-bottom:20px;">
       ${showFinance ? `<div class="card">
-        <h3 style="font-size:15px;margin-bottom:14px;">Giving overview</h3>
-        ${barRow('Sunday offertory', fin.sunday, fin.total)}
-        ${barRow('Groups & districts', fin.group, fin.total)}
-        ${barRow('Development fund', fin.dev, fin.total)}
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--rule-light);font-size:13px;display:flex;justify-content:space-between;">
-          <span style="opacity:0.7;">Total collections</span><strong>${fmtKES(fin.total)}</strong>
-        </div>
+        <h3 style="font-size:15px;margin-bottom:14px;">Financial snapshot</h3>
+        ${financeDonutChart(fin)}
         <div style="text-align:right;margin-top:8px;"><a href="#" onclick="setUI({view:'finance'});return false;" style="font-size:12.5px;color:var(--brass);">View Finance →</a></div>
       </div>` : ''}
       ${showPastoral ? `<div class="card">
