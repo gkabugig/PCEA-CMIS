@@ -2332,9 +2332,12 @@ function monthlyServiceAttendance(){
 }
 function attendanceFiguresTable(){
   const months = monthlyServiceAttendance();
-  const monthLabels = Array.from({length:12},(_,i)=>new Date(2000,i,1).toLocaleDateString('en-KE',{month:'short'}));
+  const allMonthLabels = Array.from({length:12},(_,i)=>new Date(2000,i,1).toLocaleDateString('en-KE',{month:'short'}));
+  const loggedIdx = allMonthLabels.map((_,i)=>i).filter(i=>SERVICE_TYPES.some(t=>months[i][t]>0));
+  if(loggedIdx.length===0) return `<div style="font-size:12.5px;opacity:0.6;">No attendance recorded yet this year.</div>`;
+  const monthLabels = loggedIdx.map(i=>allMonthLabels[i]);
   const rows = SERVICE_TYPES.map(t=>{
-    const values = months.map(m=>m[t]);
+    const values = loggedIdx.map(i=>months[i][t]);
     return {type:t, values, rowTotal:values.reduce((a,v)=>a+v,0)};
   });
   const grandTotal = rows.reduce((a,r)=>a+r.rowTotal,0);
