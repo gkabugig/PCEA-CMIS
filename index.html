@@ -2330,38 +2330,35 @@ function monthlyServiceAttendance(){
   });
   return months;
 }
-function attendanceHeatmap(){
+function attendanceFiguresTable(){
   const months = monthlyServiceAttendance();
   const monthLabels = Array.from({length:12},(_,i)=>new Date(2000,i,1).toLocaleDateString('en-KE',{month:'short'}));
   const rows = SERVICE_TYPES.map(t=>{
     const values = months.map(m=>m[t]);
-    const rowMax = Math.max(...values, 1);
-    return {type:t, values, rowMax};
+    return {type:t, values, rowTotal:values.reduce((a,v)=>a+v,0)};
   });
-  const grandTotal = rows.reduce((a,r)=>a+r.values.reduce((x,y)=>x+y,0),0);
+  const grandTotal = rows.reduce((a,r)=>a+r.rowTotal,0);
+  const monthTotals = monthLabels.map((_,i)=>rows.reduce((a,r)=>a+r.values[i],0));
   return `
-    <div style="font-size:11px;opacity:0.6;margin-bottom:8px;">
-      ${grandTotal>0 ? 'Darker means busier for that service, relative to its own year — hover a cell for the exact count.' : 'No attendance recorded yet this year.'}
-    </div>
-    <div style="overflow-x:auto;">
-      <table style="border-collapse:separate;border-spacing:2px;font-size:10px;width:100%;">
-        <thead><tr>
-          <th style="text-align:left;padding:2px 6px;"></th>
-          ${monthLabels.map(m=>`<th style="font-weight:500;opacity:0.55;text-align:center;padding:2px 2px;white-space:nowrap;">${esc(m)}</th>`).join('')}
-        </tr></thead>
-        <tbody>
-          ${rows.map(r=>`<tr>
-            <td style="padding:2px 6px;white-space:nowrap;opacity:0.8;">${esc(r.type)}</td>
-            ${r.values.map((v,i)=>{
-              const intensity = v>0 ? v/r.rowMax : 0;
-              const bg = `rgba(201,134,15,${(0.06+0.84*intensity).toFixed(2)})`;
-              const textColor = intensity>0.55 ? '#fff' : 'var(--ink)';
-              return `<td title="${esc(r.type)}: ${v} — ${esc(monthLabels[i])}" style="text-align:center;padding:6px 3px;background:${bg};color:${textColor};border-radius:3px;min-width:20px;">${v>0?v:''}</td>`;
-            }).join('')}
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
+    <div class="table-wrap"><table style="font-size:11.5px;">
+      <thead><tr>
+        <th style="white-space:nowrap;">Service</th>
+        ${monthLabels.map(m=>`<th style="text-align:right;white-space:nowrap;">${esc(m)}</th>`).join('')}
+        <th style="text-align:right;white-space:nowrap;">Total</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr>
+          <td style="white-space:nowrap;">${esc(r.type)}</td>
+          ${r.values.map(v=>`<td style="text-align:right;">${v>0?v.toLocaleString():'—'}</td>`).join('')}
+          <td style="text-align:right;font-weight:600;">${r.rowTotal.toLocaleString()}</td>
+        </tr>`).join('')}
+        <tr style="background:rgba(166,129,60,0.06);">
+          <td style="font-weight:600;border-bottom:none;">Total</td>
+          ${monthTotals.map(v=>`<td style="text-align:right;font-weight:600;border-bottom:none;">${v.toLocaleString()}</td>`).join('')}
+          <td style="text-align:right;font-weight:600;border-bottom:none;">${grandTotal.toLocaleString()}</td>
+        </tr>
+      </tbody>
+    </table></div>
   `;
 }
 function renderDashboard(){
@@ -2412,7 +2409,7 @@ function renderDashboard(){
     </div>
     ${canSeeServiceBook() ? `<div class="card" style="padding:14px;">
       <h3 style="font-size:14px;margin-bottom:8px;">Service attendance — by month, ${new Date().getFullYear()}</h3>
-      ${attendanceHeatmap()}
+      ${attendanceFiguresTable()}
       <div style="text-align:right;margin-top:6px;"><a href="#" onclick="setUI({view:'servicebook'});return false;" style="font-size:12.5px;color:var(--brass);">View Service Attendance →</a></div>
     </div>` : ''}
   `;
