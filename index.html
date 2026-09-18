@@ -74,6 +74,8 @@
   body.app-busy #busyBar{opacity:1;width:100%;animation:busyShimmer 1.1s ease-in-out infinite;}
   @keyframes busyShimmer{0%{background-position:0% 0;}100%{background-position:200% 0;}}
   .stat-num{font-family:var(--font-serif);font-size:30px;color:var(--ink);}
+  .dash-stat-card{padding:12px 14px;}
+  .dash-stat-card .stat-num{font-size:20px;}
   #app{display:grid;grid-template-columns:264px 1fr;min-height:100vh;}
   .app-aside{border-right:1px solid var(--rule);padding:32px 0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--paper);}
   .app-main{overflow-y:auto;height:100vh;padding:40px 48px;}
@@ -2164,10 +2166,10 @@ function sectionHeader(title, sub, actions){
     <div style="display:flex;gap:8px;">${actions||''}</div>
   </div>`;
 }
-function statCard(label,value,hint,viewKey){
+function statCard(label,value,hint,viewKey,extraClass){
   const clickable = viewKey && visibleNavItems().some(n=>n.key===viewKey);
   const attrs = clickable ? `onclick="setUI({view:'${viewKey}'})" style="cursor:pointer;" role="link" tabindex="0" onkeydown="if(event.key==='Enter')setUI({view:'${viewKey}'})"` : '';
-  return `<div class="card" ${attrs}><div style="font-size:12px;opacity:0.6;margin-bottom:6px;">${esc(label)}</div><div class="stat-num">${value}</div><div style="font-size:11.5px;opacity:0.55;margin-top:4px;">${esc(hint)}</div></div>`;
+  return `<div class="card ${extraClass||''}" ${attrs}><div style="font-size:12px;opacity:0.6;margin-bottom:6px;">${esc(label)}</div><div class="stat-num">${value}</div><div style="font-size:11.5px;opacity:0.55;margin-top:4px;">${esc(hint)}</div></div>`;
 }
 const DISTRICT_DONUT_COLORS = ['#2A78D6','#C9860F','#15803D','#7C3AED','#DC2626'];
 function donutChart(segments, formatValue){
@@ -2380,18 +2382,18 @@ function renderDashboard(){
   const fin = showFinance ? financeSummary() : null;
   return `
     ${sectionHeader('Dashboard','Congregation overview — updated live from every module below, so nothing here can disagree with its own page.')}
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:32px;">
-      <div class="card" onclick="setUI({view:'members'})" style="cursor:pointer;" role="link" tabindex="0" onkeydown="if(event.key==='Enter')setUI({view:'members'})">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px;">
+      <div class="card dash-stat-card" onclick="setUI({view:'members'})" style="cursor:pointer;" role="link" tabindex="0" onkeydown="if(event.key==='Enter')setUI({view:'members'})">
         <div style="font-size:12px;opacity:0.6;margin-bottom:6px;">Total people</div>
         <div style="display:flex;gap:18px;">
-          <div><div class="stat-num" style="font-size:26px;">${STATE.members.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">members</div></div>
-          <div><div class="stat-num" style="font-size:26px;">${householdUnitsCount().toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">households</div></div>
+          <div><div class="stat-num">${STATE.members.length.toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">members</div></div>
+          <div><div class="stat-num">${householdUnitsCount().toLocaleString()}</div><div style="font-size:11px;opacity:0.55;">households</div></div>
         </div>
       </div>
-      ${statCard('Districts & Groups', STATE.districts.length+' / '+groups, 'Districts / active groups', 'groups')}
-      ${statCard('Visitors pending', pendingVisitors, 'Not yet joined', 'visitors')}
-      ${statCard('Upcoming events', events, 'From today onward', 'events')}
-      ${showPastoral ? statCard('Pastoral Care', openFollowups, 'Cases still open', 'followups') : ''}
+      ${statCard('Districts & Groups', STATE.districts.length+' / '+groups, 'Districts / active groups', 'groups', 'dash-stat-card')}
+      ${statCard('Visitors pending', pendingVisitors, 'Not yet joined', 'visitors', 'dash-stat-card')}
+      ${statCard('Upcoming events', events, 'From today onward', 'events', 'dash-stat-card')}
+      ${showPastoral ? statCard('Pastoral Care', openFollowups, 'Cases still open', 'followups', 'dash-stat-card') : ''}
     </div>
     <div style="display:grid;grid-template-columns:${showFinance?'repeat(auto-fit,minmax(300px,1fr))':'1fr'};gap:20px;margin-bottom:20px;">
       ${showFinance ? `<div class="card">
