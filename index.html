@@ -2178,9 +2178,11 @@ function statCard(label,value,hint,viewKey,extraClass){
   return `<div class="card ${extraClass||''}" ${attrs}><div style="font-size:12px;opacity:0.6;margin-bottom:6px;">${esc(label)}</div><div class="stat-num">${value}</div><div style="font-size:11.5px;opacity:0.55;margin-top:4px;">${esc(hint)}</div></div>`;
 }
 const DISTRICT_DONUT_COLORS = ['#2A78D6','#C9860F','#15803D','#7C3AED','#DC2626'];
-function donutChart(segments, formatValue){
+function donutChart(segments, formatValue, size){
+  size = size || 112;
   const total = segments.reduce((a,s)=>a+s.value,0);
-  const size = 112, r = 42, cx = size/2, cy = size/2, sw = 15, circumference = 2*Math.PI*r;
+  const sw = Math.round(size*0.134), r = size/2 - sw, cx = size/2, cy = size/2, circumference = 2*Math.PI*r;
+  const holeInset = Math.round(sw*1.6);
   let cursor = 0;
   const arcs = total>0 ? segments.filter(s=>s.value>0).map(s=>{
     const frac = s.value/total;
@@ -2193,7 +2195,7 @@ function donutChart(segments, formatValue){
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
       <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;">
         <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${arcs}</svg>
-        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+        <div style="position:absolute;inset:${holeInset}px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;">
           <div style="font-size:9.5px;opacity:0.6;">Total</div>
           <div style="font-size:12.5px;font-weight:600;line-height:1.2;">${formatValue(total)}</div>
         </div>
@@ -2215,7 +2217,7 @@ function financeDonutChart(fin){
     {label:'Sunday offertory', value:fin.sunday, color:'#2A78D6'},
     {label:'Groups & districts', value:fin.group, color:'#C9860F'},
     {label:'Development fund', value:fin.dev, color:'#0D9488'}
-  ], fmtKES);
+  ], fmtKES, 150);
 }
 function districtPopulations(){
   const withPop = STATE.districts.map(d=>{
