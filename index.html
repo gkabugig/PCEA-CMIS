@@ -277,6 +277,7 @@ const MODULE_SHOWCASE = [
   {icon:'trendUp', color:'forest', name:'Investments', desc:'Track church investments and returns.'},
   {icon:'handHeart', color:'wine', name:'Welfare', desc:'Bereavement and wedding support for members.'},
   {icon:'chat', color:'plum', name:'Communication', desc:'Reach your church family effectively.'},
+  {icon:'book', color:'brass', name:'Church History', desc:'Preserve milestones, ministers, records and photographs.'},
   {icon:'chartDoc', color:'teal', name:'Reports', desc:'Make informed decisions with real data.'},
   {icon:'shield', color:'navy', name:'Users, Roles & Audit', desc:'Control access and keep your data safe.'}
 ];
@@ -414,7 +415,14 @@ const STATUS_TONE = {
   Closed:'var(--forest)', Joined:'var(--forest)', Active:'var(--forest)', Suspended:'var(--wine)',
   Cleared:'var(--forest)', Paid:'var(--forest)', 'Partially Paid':'var(--brass)', Unpaid:'var(--wine)', Vacant:'rgba(43,43,40,0.4)', Left:'rgba(43,43,40,0.5)', Visiting:'#5980a6'
 };
-const OBLIGATION_STATUS_TONE = { Cleared:'#00C853', 'Partially Paid':'#FFAB00', Overdue:'#DC143C', Upcoming:'#2979FF' };
+const OBLIGATION_STATUS_TONE = { Cleared:'#00C853', 'Partially Paid':'#FFAB00', Overdue:'#DC143C', Upcoming:'#2979FF', 'Not Yet Due':'#7E57C2', 'Part Paid · Not Due':'#26A69A' };
+// Church year runs 1 Oct – 30 Sep. "2025/26" = 1 Oct 2025 – 30 Sep 2026.
+const CHURCH_MONTHS = ['October','November','December','January','February','March','April','May','June','July','August','September'];
+function churchYearStart(d){ d = d||new Date(); return d.getMonth()>=9 ? d.getFullYear() : d.getFullYear()-1; }
+function churchYearLabel(start){ return start+'/'+String((start+1)%100).padStart(2,'0'); }
+function churchYearOf(month, year){ return MONTH_OPTIONS.indexOf(month)>=9 ? year : year-1; }
+function obligationDueISO(month, year){ const i = MONTH_OPTIONS.indexOf(month); if(i<0||!year) return null; const last = new Date(year, i+1, 0).getDate(); return year+'-'+String(i+1).padStart(2,'0')+'-'+String(last).padStart(2,'0'); }
+function obligationDefaultYear(month){ const cy = churchYearStart(); return MONTH_OPTIONS.indexOf(month)>=9 ? cy : cy+1; }
 const CARD_GROUPS = ["PCMF (Presbyterian Church Men's Fellowship)", "Woman's Guild", "Boys' & Girls' Brigade"];
 const GROUP_MEMBER_CATEGORIES = {
   "PCMF (Presbyterian Church Men's Fellowship)": ['Associate (Constitution & Card)', 'Badge Holder', 'Full Member'],
@@ -723,7 +731,7 @@ async function logAudit(action, detail){
    plenty fast, rather than building out fine-grained incremental sync).
 --------------------------------------------------------------------- */
 async function fetchAll(){
-  const [districts, members, households, groups, groupMembers, groupGiving, groupMeetings, roleHolders, visitors, visitorContacts, services, events, followups, pastoralVisits, settingsRows, districtObligations, groupObligations, messageTemplates, communications, investments, welfareMembers, welfareCases, welfareContributions] = await Promise.all([
+  const [districts, members, households, groups, groupMembers, groupGiving, groupMeetings, roleHolders, visitors, visitorContacts, services, events, followups, pastoralVisits, settingsRows, districtObligations, groupObligations, messageTemplates, communications, investments, welfareMembers, welfareCases, welfareContributions, districtFellowships, historyEntries, historyLeaders] = await Promise.all([
     sb.from('mis_districts').select('*').order('name').then(r=>r.data||[]),
     sb.from('mis_members').select('*').eq('active',true).order('name').then(r=>r.data||[]),
     sb.from('mis_households').select('*').eq('active',true).order('name').then(r=>r.data||[]),
@@ -747,8 +755,13 @@ async function fetchAll(){
     sb.from('mis_welfare_members').select('*').order('created_at',{ascending:false}).then(r=>r.data||[]),
     sb.from('mis_welfare_cases').select('*').order('case_date',{ascending:false}).then(r=>r.data||[]),
     sb.from('mis_welfare_contributions').select('*').then(r=>r.data||[]),
+    sb.from('mis_district_fellowships').select('*').order('fellowship_date',{ascending:false}).then(r=>r.data||[]),
+    sb.from('mis_church_history').select('*').order('entry_date',{ascending:true}).then(r=>r.data||[]),
+    sb.from('mis_church_leaders').select('*').order('start_year',{ascending:true}).then(r=>r.data||[]),
   ]);
   STATE = { districts, members, households, groups, groupMembers, groupGiving, groupMeetings, roleHolders, visitors, visitorContacts, services, events, followups, pastoralVisits, settings:settingsRows, districtObligations, groupObligations, messageTemplates, communications, investments, welfareMembers, welfareCases, welfareContributions, auditLog: [] };
+  STATE.districtFellowships = districtFellowships || [];
+  STATE.historyEntries = historyEntries || []; STATE.historyLeaders = historyLeaders || [];
   if(pastoralDistrictScope()){ const ids = new Set(STATE.followups.map(f=>f.id)); STATE.pastoralVisits = STATE.pastoralVisits.filter(v=>ids.has(v.case_id)); }
   if(canSeeAuditLog()) await fetchAuditLog();
 }
@@ -763,17 +776,21 @@ async function refetch(key){
   const table = {
     districts:'mis_districts', members:'mis_members', households:'mis_households',
     groups:'mis_groups', groupMembers:'mis_group_members', groupGiving:'mis_group_giving',
-    groupMeetings:'mis_group_meetings', roleHolders:'mis_role_holders',
+    groupMeetings:'mis_group_meetings', roleHolders:'mis_role_holders', districtFellowships:'mis_district_fellowships',
     visitors:'mis_visitors', visitorContacts:'mis_visitor_contacts', services:'mis_services', events:'mis_events',
     followups:'mis_pastoral_cases', pastoralVisits:'mis_pastoral_visits',
     messageTemplates:'mis_message_templates', communications:'mis_communications', investments:'mis_investments',
-    welfareMembers:'mis_welfare_members', welfareCases:'mis_welfare_cases', welfareContributions:'mis_welfare_contributions'
+    welfareMembers:'mis_welfare_members', welfareCases:'mis_welfare_cases', welfareContributions:'mis_welfare_contributions',
+    historyEntries:'mis_church_history', historyLeaders:'mis_church_leaders'
   }[key];
   let q = sb.from(table).select('*');
   if(key==='members' || key==='households' || key==='groups') q = q.eq('active', true);
   if(key==='groupMeetings' || key==='visitors' || key==='services') q = q.order(key==='visitors'?'visited':key==='services'?'service_date':'meeting_date',{ascending:false});
   else if(key==='visitorContacts') q = q.order('contact_date',{ascending:false});
   else if(key==='events') q = q.order('event_date',{ascending:false});
+  else if(key==='districtFellowships') q = q.order('fellowship_date',{ascending:false});
+  else if(key==='historyEntries') q = q.order('entry_date',{ascending:true});
+  else if(key==='historyLeaders') q = q.order('start_year',{ascending:true});
   else if(key==='followups'){ if(!hasPastoralAccess()){ STATE.followups=[]; return; } if(pastoralDistrictScope()) q = q.eq('district_id', pastoralDistrictScope()); q = q.order('due',{ascending:false}); }
   else if(key==='pastoralVisits') q = q.order('visit_date',{ascending:false});
   else if(key==='messageTemplates') q = q.order('created_at');
@@ -806,6 +823,7 @@ const NAV_ITEMS = [
   {key:'investments', label:'Investments'},
   {key:'welfare', label:'Welfare'},
   {key:'communication', label:'Communication'},
+  {key:'history', label:'Church History'},
   {key:'reports', label:'Reports'},
   {key:'users', label:'Users, Roles & Audit'}
 ];
@@ -814,7 +832,7 @@ function visibleNavItems(){
   const role = sessionRole();
   let hide = [];
   if(PASTORAL_DISTRICT_ROLES.includes(role)){
-    hide = ['groups','visitors','servicebook','events','finance','investments','welfare','users','communication','reports'];
+    hide = ['visitors','servicebook','events','finance','investments','welfare','users','communication','reports'];
   } else if(GROUP_SCOPED_ROLES.includes(role)){
     hide = ['dashboard','members','visitors','servicebook','finance','investments','welfare','users','followups','events','reports','communication'];
   } else if(role==='Parish Minister'){
@@ -995,6 +1013,7 @@ function renderView(){
     case 'finance': return renderFinance();
     case 'investments': return renderInvestments();
     case 'welfare': return renderWelfare();
+    case 'history': return renderHistory();
     case 'communication': return renderCommunication();
     case 'reports': return renderReports();
     default: return '';
@@ -1612,19 +1631,20 @@ function calChangeMonth(delta){
 }
 function fmtTime(t){ if(!t) return ''; const [H,M] = String(t).split(':').map(Number); if(isNaN(H)) return esc(t); return ((H%12)||12)+':'+String(M||0).padStart(2,'0')+' '+(H<12?'AM':'PM'); }
 function eventTimeRange(e){ return e.start_time ? fmtTime(e.start_time)+(e.end_time?' – '+fmtTime(e.end_time):'') : ''; }
-function openEventModal(id, presetDate){
+function openEventModal(id, presetDate, presetGroupId){
   const editing = id ? STATE.events.find(e=>e.id===id) : null;
   UI.modal='event';
   UI.modalProps = editing ? {
     id, name:editing.name, date:editing.event_date, category:editing.category, location:editing.location, startTime:editing.start_time||'', endTime:editing.end_time||'', facilitator:editing.facilitator||'',
     organizerType:editing.organizer_type, organizerGroupId:editing.organizer_group_id||STATE.groups[0]?.id||'',
-    status:editing.status||'Scheduled', origStatus:editing.status||'Scheduled', origDate:editing.event_date, newDate:'', reason:''
-  } : { id:null, name:'', date:presetDate||new Date().toISOString().slice(0,10), category:'Congregation', location:'', startTime:'', endTime:'', facilitator:'', organizerType:'congregation', organizerGroupId: STATE.groups[0]?.id||'', status:'Scheduled', origStatus:'Scheduled', origDate:null, newDate:'', reason:'' };
+    status:editing.status||'Scheduled', origStatus:editing.status||'Scheduled', origDate:editing.event_date, newDate:'', reason:'',
+    attachments:[...(editing.attachments||[])], removed:[], pendingFiles:[]
+  } : { attachments:[], removed:[], pendingFiles:[], id:null, name:'', date:presetDate||new Date().toISOString().slice(0,10), category:'Congregation', location:'', startTime:'', endTime:'', facilitator:'', organizerType:presetGroupId?'group':'congregation', organizerGroupId: presetGroupId||STATE.groups[0]?.id||'', status:'Scheduled', origStatus:'Scheduled', origDate:null, newDate:'', reason:'' };
   UI.modalErrors = {};
   render();
 }
 async function eventWrite(payload, id){
-  const run = pl => id ? sb.from('mis_events').update(pl).eq('id', id) : sb.from('mis_events').insert(pl);
+  const run = async pl => { const r = id ? await sb.from('mis_events').update(pl).eq('id', id).select() : await sb.from('mis_events').insert(pl).select(); if(!r.error && id && !(r.data||[]).length) return { error:{ message:'your account does not have permission to edit this event (database rule).' } }; return { ...r, data:(r.data||[])[0] || (id?{id}:null) }; };
   let res = await run(payload);
   if(res.error && /start_time|end_time|facilitator/i.test(res.error.message||'')){
     const { start_time, end_time, facilitator, ...base } = payload;
@@ -1658,18 +1678,35 @@ async function saveEventModal(){
     if(p.id){
       const { error } = await eventWrite(payload, p.id);
       if(error){ showToast('Could not save: '+error.message); return; }
+      await saveEventFiles(p, p.id);
       await logAudit(p.newDate ? 'Postponed event' : p.status!==p.origStatus ? 'Event '+p.status.toLowerCase() : 'Updated event', p.name.trim()+(p.newDate?' → '+fmtDate(p.newDate):''));
       showToast('Event updated.');
     }else{
-      const { error } = await eventWrite(payload, null);
+      const { data, error } = await eventWrite(payload, null);
       if(error){ showToast('Could not save: '+error.message); return; }
-      await logAudit('Added event', p.name.trim());
+      await saveEventFiles(p, data && data.id);
+      await logAudit('Added event', p.name.trim()+((p.pendingFiles||[]).length?' · '+p.pendingFiles.length+' file(s)':''));
       showToast('Event added.');
     }
     await refetch('events');
     UI.modal=null; render();
   });
 }
+async function saveEventFiles(p, eventId){
+  if(!eventId) return;
+  const attachments = [...(p.attachments||[])];
+  for(const file of (p.pendingFiles||[])){
+    const path = `events/${eventId}-${Date.now()}-${file.name.replace(/[^\w.\-]+/g,'_')}`;
+    const { error } = await sb.storage.from('group-member-files').upload(path, file, { contentType:file.type });
+    if(error) showToast('Could not upload '+file.name+': '+error.message); else attachments.push({path, name:file.name});
+  }
+  if((p.removed||[]).length) await sb.storage.from('group-member-files').remove(p.removed.map(a=>a.path));
+  if((p.pendingFiles||[]).length || (p.removed||[]).length){
+    const { error } = await sb.from('mis_events').update({attachments}).eq('id', eventId);
+    if(error) showToast(/attachments/i.test(error.message) ? 'Files uploaded — run the database update to add the attachments column to mis_events.' : 'Could not save files: '+error.message);
+  }
+}
+function removeExistingEventFile(i){ const p = UI.modalProps; p.removed.push(p.attachments[i]); p.attachments = p.attachments.filter((_,x)=>x!==i); render(); }
 async function confirmRemoveEvent(id){
   const e = STATE.events.find(x=>x.id===id);
   if(!e) return;
@@ -1703,12 +1740,13 @@ function eventViewModalBody(){
     ${row('Facilitator', esc(e.facilitator||'—'))}
     ${row('Organizer', org)}
     ${(()=>{ const pp = [...eventLog(e)].reverse().find(x=>x.action==='Postponed'); return e.status==='Postponed' && pp ? row('Postponed', `From ${fmtDate(pp.from_date)} to <strong>${fmtDate(pp.to_date)}</strong>${pp.reason?' — '+esc(pp.reason):''}`) : ''; })()}
+    ${(e.attachments||[]).length ? `<h3 style="font-size:13.5px;margin:18px 0 4px;">Documents &amp; photos <span style="font-weight:400;opacity:0.55;">(${e.attachments.length})</span></h3>${meetingFilesView(e.attachments)}` : ''}
     ${eventLog(e).length ? `<h3 style="font-size:13.5px;margin:18px 0 8px;">Change log</h3>
       <div style="max-height:200px;overflow:auto;">${[...eventLog(e)].reverse().map(x=>`<div style="font-size:12.5px;padding:7px 0;border-bottom:1px solid var(--rule-light);">
         <strong>${esc(x.action)}</strong>${x.from_date?' · '+fmtDate(x.from_date)+' → '+fmtDate(x.to_date):x.to_date&&x.action==='Created'?' · '+fmtDate(x.to_date):''}${x.from_status?' · '+esc(x.from_status)+' → '+esc(x.to_status):''}${x.reason?` <span style="opacity:0.75;">— ${esc(x.reason)}</span>`:''}
         <div style="font-size:11px;opacity:0.55;">${new Date(x.at).toLocaleString('en-KE')}${x.by?' · '+esc(x.by):''}</div></div>`).join('')}</div>` : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;flex-wrap:wrap;">
-      ${canEdit ? `<button class="btn-danger" onclick="UI.modal=null;confirmRemoveEvent('${e.id}')">Remove</button><button class="btn-ghost" onclick="openEventModal('${e.id}')">Edit</button>` : ''}
+      ${canEdit ? `<button class="btn-danger" onclick="UI.modal=null;confirmRemoveEvent('${e.id}')">Remove</button><button class="btn-ghost" onclick="openEventModal('${e.id}')">Edit / attach files</button>` : ''}
       <button class="btn-ghost" onclick="setUI({modal:null})">Close</button>
     </div>`;
 }
@@ -1732,6 +1770,14 @@ function eventModalBody(){
     ${p.organizerType==='group' ? field('Group', `<select class="field-input" onchange="setModalProp('organizerGroupId',this.value)">${STATE.groups.map(g=>`<option value="${g.id}" ${p.organizerGroupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`) : ''}
     ${field('Status', `<select class="field-input" onchange="setModalProp('status',this.value)">${EVENT_STATUSES.map(s=>`<option ${p.status===s?'selected':''}>${s}</option>`).join('')}</select>`)}
     ${p.status==='Postponed' ? field(p.origStatus==='Postponed' ? 'Postpone again to (optional)' : 'New date', `<input type="date" class="field-input" value="${p.newDate}" onchange="setModalProp('newDate',this.value)">`, e.newDate) : ''}
+    <label class="field-label">Documents &amp; photos</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📄 Add documents<input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">🖼 Add photos<input type="file" multiple accept="image/*" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📷 Take photo<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+    </div>
+    ${(p.attachments||[]).map((a,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="display:flex;align-items:center;gap:8px;min-width:0;">${isImageFile(a)?`<img data-signed-path="${esc(a.path)}" style="width:36px;height:36px;object-fit:cover;background:var(--rule-light);flex:none;">`:'📎'}<span style="overflow-wrap:anywhere;">${esc(a.name)}</span></span><button class="btn-danger" onclick="removeExistingEventFile(${i})">Remove</button></div>`).join('')}
+    ${(p.pendingFiles||[]).map((f,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="overflow-wrap:anywhere;">${f.type&&f.type.startsWith('image/')?'🖼':'📎'} ${esc(f.name)} <span style="opacity:0.55;">(new)</span></span><button class="btn-danger" onclick="removePendingMeetingFile(${i})">Remove</button></div>`).join('')}
     ${p.id && (p.status!==p.origStatus || p.newDate) ? field('Reason for change', `<input class="field-input" value="${esc(p.reason)}" placeholder="e.g. Clash with Presbytery meeting" oninput="setModalPropQuiet('reason',this.value)">`) : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
@@ -2093,26 +2139,29 @@ function groupAnnualTotal(g){
 }
 function obligationsList(){
   const out = [];
-  const isDueMonthFuture = dueMonth=>{
-    if(!dueMonth) return false;
-    const idx = MONTH_OPTIONS.indexOf(dueMonth);
-    return idx>-1 && idx>new Date().getMonth();
+  const today = new Date().toISOString().slice(0,10);
+  const statusFor = (assessed, paid, dueISO) => {
+    const balance = assessed - paid;
+    if(balance<=0) return 'Cleared';
+    const future = dueISO && dueISO >= today;
+    if(future) return paid>0 ? 'Part Paid · Not Due' : 'Not Yet Due';
+    return paid>0 ? 'Partially Paid' : 'Overdue';
   };
   const districtFixed = num(STATE.settings.district_mmf_fixed);
   STATE.districts.forEach(d=>{
     const ob = STATE.districtObligations.find(o=>o.district_id===d.id) || {paid:0};
-    const assessed = districtFixed;
-    const balance = assessed - num(ob.paid);
-    const status = balance<=0 ? 'Cleared' : num(ob.paid)>0 ? 'Partially Paid' : 'Overdue';
-    out.push({key:d.id, name:d.name, type:'District', obligation:'Parish MMF', assessed, paid:num(ob.paid), balance, status, dueMonth:null});
+    const assessed = districtFixed, paid = num(ob.paid), balance = assessed - paid;
+    const dueMonth = ob.due_month || null, dueYear = ob.due_year ? num(ob.due_year) : (dueMonth ? obligationDefaultYear(dueMonth) : null);
+    const dueISO = obligationDueISO(dueMonth, dueYear);
+    out.push({key:d.id, name:d.name, type:'District', obligation:'Parish MMF', assessed, paid, balance, status:statusFor(assessed, paid, dueISO), dueMonth, dueYear, dueISO, churchYear: dueISO ? churchYearLabel(churchYearOf(dueMonth, dueYear)) : ''});
   });
   STATE.groups.forEach(g=>{
     if(g.fee_exempt) return;
     const ob = STATE.groupObligations.find(o=>o.group_id===g.id) || {paid:0};
-    const assessed = num(g.budget);
-    const balance = assessed - num(ob.paid);
-    const status = balance<=0 ? 'Cleared' : num(ob.paid)>0 ? 'Partially Paid' : (isDueMonthFuture(g.collection_month) ? 'Upcoming' : 'Overdue');
-    out.push({key:g.id, name:g.name, type:g.category, obligation:'Parish Activity Fee', assessed, paid:num(ob.paid), balance, status, dueMonth:g.collection_month});
+    const assessed = num(g.budget), paid = num(ob.paid), balance = assessed - paid;
+    const dueMonth = ob.due_month || g.collection_month || null, dueYear = ob.due_year ? num(ob.due_year) : (dueMonth ? obligationDefaultYear(dueMonth) : null);
+    const dueISO = obligationDueISO(dueMonth, dueYear);
+    out.push({key:g.id, name:g.name, type:g.category, obligation:'Parish Activity Fee', assessed, paid, balance, status:statusFor(assessed, paid, dueISO), dueMonth, dueYear, dueISO, churchYear: dueISO ? churchYearLabel(churchYearOf(dueMonth, dueYear)) : ''});
   });
   return out;
 }
@@ -2307,17 +2356,19 @@ function renderFinance(){
     <div class="card">
       <h3 style="font-size:14px;margin-bottom:14px;">Parish obligations</h3>
       ${canEdit ? `<div style="margin-bottom:14px;"><label class="field-label">Parish MMF per district (KES, applies to all districts)</label><input type="number" class="field-input" style="width:140px;" value="${STATE.settings.district_mmf_fixed}" onchange="updateSetting('district_mmf_fixed', this.valueAsNumber||0)"></div>` : ''}
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Obligation</th><th>Due month</th><th>Assessed</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Obligation</th><th>Due month &amp; year</th><th>Assessed</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead><tbody>
       ${obligations.map(o=>`<tr>
         <td>${esc(o.name)}</td><td>${esc(o.type)}</td><td>${esc(o.obligation)}</td>
-        <td>${o.dueMonth ? esc(o.dueMonth) : (o.type==='District' ? '—' : '<span style="opacity:0.5;">Not set</span>')}</td>
+        <td style="white-space:nowrap;">${canEdit ? (()=>{ const t = o.type==='District'?'district':'group', cy = churchYearStart(); const years = [cy-1,cy,cy+1,cy+2]; return `<div style="display:flex;gap:4px;align-items:center;"><select class="field-input" style="width:118px;padding:4px 6px;" onchange="updateObligationDue('${t}','${o.key}',this.value,${o.dueYear||'null'})"><option value="">Month…</option>${CHURCH_MONTHS.map(m=>`<option ${o.dueMonth===m?'selected':''}>${m}</option>`).join('')}</select><select class="field-input" style="width:78px;padding:4px 6px;" ${o.dueMonth?'':'disabled'} onchange="updateObligationDue('${t}','${o.key}','${o.dueMonth||''}',+this.value)">${[...new Set([...years, ...(o.dueYear?[o.dueYear]:[])])].sort().map(y=>`<option ${o.dueYear===y?'selected':''}>${y}</option>`).join('')}</select></div>`; })() : (o.dueMonth ? esc(o.dueMonth)+' '+(o.dueYear||'') : '<span style="opacity:0.5;">Not set</span>')}${o.churchYear?`<div style="font-size:10.5px;opacity:0.55;margin-top:2px;">Church year ${o.churchYear}</div>`:''}</td>
         <td>${fmtKES(o.assessed)}${o.type!=='District' ? ` <span style="opacity:0.5;font-size:11px;">(budget)</span>` : ''}</td>
         <td>${canEdit ? `<input type="number" class="field-input" style="width:90px;" value="${o.paid}" onchange="updateObligation('${o.type==='District'?'district':'group'}','${o.key}', this.valueAsNumber||0)">` : fmtKES(o.paid)}</td>
         <td style="color:${o.balance>0?'var(--wine)':'var(--forest)'};">${fmtKES(Math.abs(o.balance))}</td>
         <td><span class="badge" style="background:${OBLIGATION_STATUS_TONE[o.status]};color:#fff;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.25);display:inline-block;width:120px;text-align:center;white-space:nowrap;box-sizing:border-box;">${o.status}</span></td>
       </tr>`).join('')}
       </tbody></table></div>
-      <div style="font-size:11px;opacity:0.55;margin-top:10px;">A group's Assessed figure is not editable here — set its Budget on the group's own Giving tab under Districts &amp; Groups.</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;margin-top:12px;">${['Cleared','Part Paid · Not Due','Not Yet Due','Partially Paid','Overdue'].map(s=>`<span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:${OBLIGATION_STATUS_TONE[s]};"></span>${s}</span>`).join('')}</div>
+      <div style="font-size:11px;opacity:0.55;margin-top:8px;">Church year runs 1 October – 30 September (current: ${churchYearLabel(churchYearStart())}). An obligation is due by the last day of its due month; until then it shows as Not Yet Due.</div>
+      <div style="font-size:11px;opacity:0.55;margin-top:6px;">A group's Assessed figure is not editable here — set its Budget on the group's own Giving tab under Districts &amp; Groups.</div>
     </div>
   `;
 }
@@ -3009,6 +3060,18 @@ async function updateSetting(key, value){
     render();
   });
 }
+async function updateObligationDue(type, id, month, year){
+  const y = month ? (year || obligationDefaultYear(month)) : null;
+  await withBusyState(async ()=>{
+    const table = type==='district' ? 'mis_district_obligations' : 'mis_group_obligations';
+    const key = type==='district' ? 'district_id' : 'group_id';
+    const { error } = await sb.from(table).upsert({[key]:id, due_month:month||null, due_year:y}, {onConflict:key});
+    if(error){ showToast('Could not save: '+error.message); return; }
+    await logAudit('Updated '+type+' obligation due date', id+' due = '+(month?month+' '+y:'not set'));
+    await refetch(type==='district'?'districtObligations':'groupObligations');
+    render();
+  });
+}
 async function updateObligation(type, id, paid){
   await withBusyState(async ()=>{
     const table = type==='district' ? 'mis_district_obligations' : 'mis_group_obligations';
@@ -3353,8 +3416,8 @@ function buildReportSections(){
     {id:'income-lines-trend', title:'Income Lines by Service — Trend', desc:'Each income line compared across services over time — weekly, monthly or quarterly.', metric:'Charts + table', financial:true, chart:true,
       headers:['Period','Service',...INCOME_LINES.map(l=>l.label+' (KES)'),'Total (KES)'], rows:incomeTrendRows(UI.incomeTrendPeriod), filename:'income-lines-by-service-'+UI.incomeTrendPeriod.toLowerCase()+'.csv'},
     {id:'parish-obligations', title:'Parish Obligations', desc:'MMF (districts) and the once-a-year Activity Fee (groups) — due month, assessed, paid and balance.', metric:obligationsList().length+' obligations tracked', financial:true,
-      headers:['Name','Type','Obligation','Due Month','Assessed (KES)','Paid (KES)','Balance (KES)','Status'],
-      rows:obligationsList().map(o=>[o.name,o.type,o.obligation,o.dueMonth||'',o.assessed,o.paid,o.balance,o.status]), filename:'parish-obligations.csv'},
+      headers:['Name','Type','Obligation','Due Month','Due Year','Church Year','Assessed (KES)','Paid (KES)','Balance (KES)','Status'],
+      rows:obligationsList().map(o=>[o.name,o.type,o.obligation,o.dueMonth||'',o.dueYear||'',o.churchYear||'',o.assessed,o.paid,o.balance,o.status]), filename:'parish-obligations.csv'},
     {id:'communications-log', title:'Communications Log', desc:'Every communication logged — channel, audience and recipient counts.', metric:STATE.communications.length+' logged', comm:true,
       headers:['Date','Channel','Audience','Recipients','With phone','Message','Logged by'],
       rows:[...STATE.communications].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).map(c=>[fmtDate(c.created_at.slice(0,10)),c.channel,c.audience_label,c.recipient_count,c.phone_count,c.message,c.sent_by]), filename:'communications-log.csv'}
@@ -3365,6 +3428,10 @@ function buildReportSections(){
 }
 function renderReports(){
   const wfOK = canEditFinance();
+  if(UI.reportsView==='consolidated') return `
+    <a href="#" onclick="setUI({reportsView:null});return false;" style="font-size:12.5px;color:var(--brass);display:inline-block;margin-bottom:12px;">← All reports</a>
+    ${sectionHeader('Consolidated Activity Reports', 'Groups and districts — meetings, fellowships and events by church quarter or year, including cancellations and attachment summaries.')}
+    ${renderConsolidatedReport()}`;
   if(UI.reportsView==='welfare' && wfOK) return `
     <a href="#" onclick="setUI({reportsView:null});return false;" style="font-size:12.5px;color:var(--brass);display:inline-block;margin-bottom:12px;">← All reports</a>
     ${sectionHeader('Welfare Report', 'Membership, occurrences, contributions and arrears — kept separate from church finance.')}
@@ -3374,6 +3441,12 @@ function renderReports(){
   return `
     ${sectionHeader('Reports', 'Every figure below matches the live Dashboard and section totals — there is one calculation per metric, used everywhere.')}
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">
+      <div class="card">
+        <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Consolidated Activity Reports</div>
+        <div style="font-size:12.5px;opacity:0.7;margin-bottom:8px;line-height:1.4;">Quarterly and yearly reports for each group and district — every meeting, fellowship and event in date order, cancellations with reasons, and summaries of attached minutes and documents.</div>
+        <div style="font-size:12px;opacity:0.55;margin-bottom:12px;">Church year ${churchYearLabel(churchYearStart())}</div>
+        <div style="display:flex;gap:14px;"><a href="#" onclick="setUI({reportsView:'consolidated'});return false;" style="font-size:12.5px;color:var(--ink);font-weight:600;">View report</a></div>
+      </div>
       ${wfOK ? `<div class="card">
         <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Welfare Report</div>
         <div style="font-size:12.5px;opacity:0.7;margin-bottom:8px;line-height:1.4;">Welfare membership, bereavement and wedding occurrences, contributions, district summary, arrears and ledger — filter by period and district.</div>
@@ -3811,6 +3884,7 @@ function renderGroups(){
     if(g) return renderGroupDetail(g);
     UI.selectedGroupId = null;
   }
+  if(PASTORAL_DISTRICT_ROLES.includes(role)) return `${sectionHeader('District Fellowships & Meetings', esc(districtName(sessionDistrictId())||''))}${renderDistrictFellowships()}`;
   if(!restrictedToId && UI.groupsSection==='Districts') return renderDistrictsTab();
 
   let list = STATE.groups;
@@ -3849,6 +3923,647 @@ function renderGroups(){
     </div>
   `;
 }
+/* ---------------------------------------------------------------------
+   CONSOLIDATED ACTIVITY REPORTS — per group / district, by church quarter
+   (Q1 Oct–Dec, Q2 Jan–Mar, Q3 Apr–Jun, Q4 Jul–Sep) or church year.
+   Attachment summaries: tries the 'summarize-attachment' Edge Function
+   (AI) first, falls back to in-browser text extraction + extractive
+   summary. Summaries are cached on the attachment object in the DB.
+--------------------------------------------------------------------- */
+function cyQuarterRange(start, q){
+  const r = { 1:[start+'-10-01', start+'-12-31'], 2:[(start+1)+'-01-01',(start+1)+'-03-31'], 3:[(start+1)+'-04-01',(start+1)+'-06-30'], 4:[(start+1)+'-07-01',(start+1)+'-09-30'] };
+  return r[q];
+}
+function cyQuarterOf(iso){ const m = +iso.slice(5,7); return m>=10?1:m<=3?2:m<=6?3:4; }
+const CR_QLABEL = {1:'Q1 · Oct–Dec',2:'Q2 · Jan–Mar',3:'Q3 · Apr–Jun',4:'Q4 · Jul–Sep'};
+function crPeriod(){
+  const c = UI.cr || {}; const start = c.year ?? churchYearStart(), mode = c.mode||'Quarterly';
+  const q = c.quarter || cyQuarterOf(new Date().toISOString().slice(0,10));
+  const [from,to] = mode==='Yearly' ? [start+'-10-01', (start+1)+'-09-30'] : cyQuarterRange(start, q);
+  return { start, mode, q, from, to, label: (mode==='Yearly' ? 'Church year ' : CR_QLABEL[q]+' · ')+churchYearLabel(start) };
+}
+function eventCancelReason(e){ const x = [...eventLog(e)].reverse().find(l=>l.to_status===e.status || l.action==='Postponed'); return x && x.reason ? x.reason : ''; }
+function crActivitiesFor(type, id, from, to){
+  const inR = d => d && d>=from && d<=to, out = [];
+  if(type==='Group'){
+    STATE.groupMeetings.filter(m=>m.group_id===id && inR(m.meeting_date)).forEach(m=>out.push({ date:m.meeting_date, kind:'Meeting', title:m.topic||'Meeting', status:m.status||'Held', reason:m.cancel_reason||'', table:'mis_group_meetings', rowId:m.id, attachments:m.attachments||[],
+      details:[['Venue',m.location],['Facilitator',m.facilitator],['Contact',m.contact],['Attendance',(m.status&&m.status!=='Held')?'':m.attendance_count]], body:m.minutes, bodyLabel:'Minutes', attendance:(m.status&&m.status!=='Held')?0:num(m.attendance_count) }));
+    STATE.events.filter(e=>e.organizer_type==='group' && e.organizer_group_id===id && inR(e.event_date)).forEach(e=>out.push(crEventAct(e)));
+  } else {
+    (STATE.districtFellowships||[]).filter(f=>f.district_id===id && inR(f.fellowship_date)).forEach(f=>out.push({ date:f.fellowship_date, time:f.start_time, kind:'Fellowship', title:'District fellowship'+(f.venue?' — '+f.venue:''), status:fsStatus(f), reason:f.cancel_reason||'', table:'mis_district_fellowships', rowId:f.id, attachments:f.attachments||[],
+      details:[['Venue',f.venue],['Service leader',f.service_leader],['Preacher',f.preacher],['Readings',f.readings],['Offering',f.offering!=null&&f.offering!==''?fmtKES(num(f.offering)):'']], body:f.notes, bodyLabel:'Notes', offering:fsStatus(f)==='Held'?num(f.offering):0 }));
+  }
+  return out.sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+}
+function crEventAct(e){
+  const s = eventStatus(e);
+  return { date:e.event_date, time:e.start_time, kind:'Event', title:e.name, status:s==='Upcoming'||s==='Today'?'Scheduled':s==='Past'?'Held':s, reason:(e.status==='Cancelled'||e.status==='Postponed')?eventCancelReason(e):'', table:'mis_events', rowId:e.id, attachments:e.attachments||[],
+    details:[['Time',eventTimeRange(e)],['Location',e.location],['Facilitator',e.facilitator],['Category',e.category]], body:'', bodyLabel:'' };
+}
+function crEntities(){
+  const c = UI.cr||{}, type = c.type||'Group', sel = c.entity||'All';
+  const all = type==='Group' ? STATE.groups.map(g=>({type, id:g.id, name:g.name, sub:g.category, officials:groupOfficialsSummary(g.id).map(o=>o.office+': '+o.name)}))
+    : STATE.districts.map(d=>({type, id:d.id, name:d.name, sub:'District', officials:[d.elder_name?'Elder: '+d.elder_name:'', (d.deacons||[]).length?'Deacons: '+d.deacons.join(', '):''].filter(Boolean)}));
+  return sel==='All' ? all : all.filter(x=>x.id===sel);
+}
+function crBuild(){
+  const P = crPeriod();
+  const ents = crEntities().map(en=>{
+    const acts = crActivitiesFor(en.type, en.id, P.from, P.to);
+    const cnt = s => acts.filter(a=>a.status===s).length;
+    const files = acts.flatMap(a=>a.attachments);
+    const quarters = P.mode==='Yearly' ? [1,2,3,4].map(q=>{ const [f,t] = cyQuarterRange(P.start,q); const qa = acts.filter(a=>a.date>=f&&a.date<=t); return { q, total:qa.length, held:qa.filter(a=>a.status==='Held').length, cancelled:qa.filter(a=>a.status==='Cancelled').length, postponed:qa.filter(a=>a.status==='Postponed').length, attendance:qa.reduce((s,a)=>s+(a.attendance||0),0), offering:qa.reduce((s,a)=>s+(a.offering||0),0) }; }) : null;
+    return { ...en, acts, held:cnt('Held'), cancelled:cnt('Cancelled'), postponed:cnt('Postponed'), scheduled:cnt('Scheduled'), attendance:acts.reduce((s,a)=>s+(a.attendance||0),0), offering:acts.reduce((s,a)=>s+(a.offering||0),0), files, photos:files.filter(isImageFile).length, docs:files.filter(a=>!isImageFile(a)).length, summarised:files.filter(a=>a.summary).length, quarters };
+  });
+  return { P, ents };
+}
+function crNarrative(en, P){
+  if(!en.acts.length) return 'No activities were recorded for '+en.name+' in '+P.label+'.';
+  const parts = [en.name+' recorded '+en.acts.length+' activit'+(en.acts.length===1?'y':'ies')+' in '+P.label+': '+en.held+' held'+(en.scheduled?', '+en.scheduled+' still scheduled':'')+(en.cancelled?', '+en.cancelled+' cancelled':'')+(en.postponed?', '+en.postponed+' postponed':'')+'.'];
+  if(en.attendance) parts.push('Total recorded attendance at meetings was '+en.attendance+' (average '+Math.round(en.attendance/Math.max(1,en.acts.filter(a=>a.kind==='Meeting'&&a.status==='Held').length))+' per meeting).');
+  if(en.offering) parts.push('Fellowship offerings totalled '+fmtKES(en.offering)+'.');
+  const preachers = [...new Set(en.acts.map(a=>(a.details.find(d=>d[0]==='Preacher')||[])[1]).filter(Boolean))];
+  if(preachers.length) parts.push('Preachers: '+preachers.join(', ')+'.');
+  if(en.cancelled+en.postponed) parts.push('Disruptions: '+en.acts.filter(a=>a.status==='Cancelled'||a.status==='Postponed').map(a=>fmtDate(a.date)+' '+a.title+' ('+a.status.toLowerCase()+(a.reason?' — '+a.reason:'')+')').join('; ')+'.');
+  if(en.files.length) parts.push(en.docs+' document(s) and '+en.photos+' photo(s) were attached'+(en.summarised?'; '+en.summarised+' summarised below':'')+'.');
+  return parts.join(' ');
+}
+function crStatusBadge(s){ const t = {Held:'var(--forest)',Scheduled:'var(--navy)',Cancelled:'#DC143C',Postponed:'#FFAB00',Closed:'var(--forest)'}[s]||'#8a8a8a'; return `<span class="badge" style="background:${t};${s==='Postponed'?'color:#3a2a00;':''}">${esc(s)}</span>`; }
+function renderConsolidatedReport(){
+  const c = UI.cr = UI.cr || {};
+  const { P, ents } = crBuild();
+  const cy = churchYearStart(), yrs = [cy-3,cy-2,cy-1,cy,cy+1];
+  const type = c.type||'Group';
+  const pool = type==='Group' ? STATE.groups : STATE.districts;
+  const busy = UI.crBusy;
+  const totalFiles = ents.reduce((s,e)=>s+e.files.length,0), unsummarised = ents.reduce((s,e)=>s+e.files.filter(crIsBadSummary).length,0);
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      ${field('Report for', `<select class="field-input" onchange="UI.cr.type=this.value;UI.cr.entity='All';render()">${['Group','District'].map(t=>`<option value="${t}" ${type===t?'selected':''}>${t}s</option>`).join('')}</select>`)}
+      ${field(type, `<select class="field-input" onchange="UI.cr.entity=this.value;render()"><option value="All">All ${type.toLowerCase()}s</option>${pool.map(x=>`<option value="${x.id}" ${c.entity===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`)}
+      ${field('Period', `<select class="field-input" onchange="UI.cr.mode=this.value;render()">${['Quarterly','Yearly'].map(m=>`<option ${P.mode===m?'selected':''}>${m}</option>`).join('')}</select>`)}
+      ${field('Church year', `<select class="field-input" onchange="UI.cr.year=+this.value;render()">${yrs.map(y=>`<option value="${y}" ${P.start===y?'selected':''}>${churchYearLabel(y)}</option>`).join('')}</select>`)}
+      ${P.mode==='Quarterly' ? field('Quarter', `<select class="field-input" onchange="UI.cr.quarter=+this.value;render()">${[1,2,3,4].map(q=>`<option value="${q}" ${P.q===q?'selected':''}>${CR_QLABEL[q]}</option>`).join('')}</select>`) : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        <button class="btn-ghost" style="white-space:nowrap;" ${busy||!unsummarised?'disabled':''} onclick="crSummariseAll()">${busy?'Summarising… '+busy:'Summarise attachments ('+unsummarised+')'}</button>
+        <button class="btn" style="white-space:nowrap;" onclick="crPrint()">Print / Save PDF</button>
+      </div>
+    </div>
+    <div style="font-size:12.5px;opacity:0.7;margin-bottom:18px;">${esc(P.label)} · ${fmtDate(P.from)} – ${fmtDate(P.to)} · ${ents.length} ${type.toLowerCase()}${ents.length===1?'':'s'} · ${totalFiles} attachment${totalFiles===1?'':'s'}</div>
+    ${ents.map(en=>crEntityHtml(en, P, false)).join('<div style="height:26px;"></div>')}
+  `;
+}
+function crEntityHtml(en, P, print){
+  const card = print ? 'section' : 'div class="card"';
+  const endCard = print ? 'section' : 'div';
+  const fileHtml = a => `<div style="padding:6px 0;border-top:1px solid var(--rule-light,#ddd);font-size:12.5px;"><div>${isImageFile(a)?'🖼':'📎'} <strong>${esc(a.name)}</strong>${print?'':` · <a href="#" onclick="openMeetingAttachment('${esc(a.path)}');return false;" style="color:var(--brass);">open</a>`}</div>${a.summary&&!CR_BAD_SUMMARY.test(a.summary)?`<div style="margin-top:3px;line-height:1.5;white-space:pre-wrap;">${esc(crCleanSummary(a.summary))}</div><div style="font-size:10.5px;opacity:0.5;margin-top:2px;">${a.summary_source==='ai'?'AI summary':'Extracted summary'}${print?'':` · <a href="#" onclick="crResummarise('${esc(a.path)}');return false;" style="color:var(--brass);">re-summarise</a>`}</div>`:`<div style="opacity:0.5;margin-top:2px;">${isImageFile(a)?'Photograph':'Not yet summarised'}</div>`}</div>`;
+  return `<${card} style="${print?'page-break-before:always;':''}">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;">
+      <div><div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.6;">${esc(en.sub)} · ${esc(P.label)}</div><h2 style="font-size:20px;margin:2px 0 4px;">${esc(en.name)}</h2>${en.officials.length?`<div style="font-size:12px;opacity:0.7;">${en.officials.map(esc).join(' · ')}</div>`:''}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:14px 0;">
+      ${[['Activities',en.acts.length],['Held',en.held],['Scheduled',en.scheduled],['Cancelled',en.cancelled],['Postponed',en.postponed],en.type==='Group'?['Attendance',en.attendance]:['Offering',fmtKES(en.offering)],['Attachments',en.files.length]].map(([k,v])=>`<div style="border:1px solid var(--rule,#ccc);padding:8px 10px;"><div style="font-size:11px;opacity:0.6;">${k}</div><div style="font-size:18px;font-weight:600;${k==='Cancelled'&&v?'color:#DC143C;':''}">${v}</div></div>`).join('')}
+    </div>
+    <h3 style="font-size:14px;margin:6px 0;">Summary</h3>
+    <p style="font-size:13.5px;line-height:1.6;margin:0 0 14px;">${esc(crNarrative(en, P))}</p>
+    ${en.quarters ? `<h3 style="font-size:14px;margin:14px 0 6px;">By quarter</h3>
+      <div class="table-wrap"><table><thead><tr><th>Quarter</th><th style="text-align:right;">Activities</th><th style="text-align:right;">Held</th><th style="text-align:right;">Cancelled</th><th style="text-align:right;">Postponed</th><th style="text-align:right;">${en.type==='Group'?'Attendance':'Offering'}</th></tr></thead><tbody>${en.quarters.map(q=>`<tr><td>${CR_QLABEL[q.q]}</td><td style="text-align:right;">${q.total}</td><td style="text-align:right;">${q.held}</td><td style="text-align:right;${q.cancelled?'color:#DC143C;font-weight:600;':''}">${q.cancelled}</td><td style="text-align:right;">${q.postponed}</td><td style="text-align:right;">${en.type==='Group'?q.attendance:fmtKES(q.offering)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${(en.cancelled+en.postponed) ? `<h3 style="font-size:14px;margin:16px 0 6px;color:#DC143C;">Cancelled &amp; postponed</h3>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Activity</th><th>Status</th><th>Reason</th></tr></thead><tbody>${en.acts.filter(a=>a.status==='Cancelled'||a.status==='Postponed').map(a=>`<tr><td style="white-space:nowrap;">${fmtDate(a.date)}</td><td>${esc(a.kind)}: ${esc(a.title)}</td><td>${crStatusBadge(a.status)}</td><td>${esc(a.reason||'Not recorded')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <h3 style="font-size:14px;margin:16px 0 8px;">${P.mode==='Yearly'?'All activities for the year (chronological)':'Activities (chronological)'}</h3>
+    ${en.acts.map((a,i)=>`<div style="border-left:3px solid ${a.status==='Cancelled'?'#DC143C':a.status==='Postponed'?'#FFAB00':'var(--rule,#ccc)'};padding:8px 0 8px 14px;margin-bottom:10px;page-break-inside:avoid;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px;"><strong>${i+1}. ${fmtDate(a.date)}${a.time?' · '+fmtTime(a.time):''}</strong><span style="opacity:0.6;">${esc(a.kind)}</span>${crStatusBadge(a.status)}</div>
+        <div style="font-size:15px;font-weight:600;margin:3px 0;">${esc(a.title)}</div>
+        ${a.reason?`<div style="font-size:12.5px;color:#DC143C;margin-bottom:4px;">Reason: ${esc(a.reason)}</div>`:''}
+        <div style="font-size:12.5px;line-height:1.6;">${a.details.filter(d=>d[1]!==''&&d[1]!=null).map(d=>`<span style="opacity:0.6;">${d[0]}:</span> ${esc(String(d[1]))}`).join(' · ')}</div>
+        ${a.body?`<div style="font-size:12.5px;line-height:1.55;margin-top:6px;white-space:pre-wrap;"><span style="opacity:0.6;">${a.bodyLabel}:</span> ${esc(a.body)}</div>`:''}
+        ${a.attachments.length?`<div style="margin-top:6px;">${a.attachments.map(fileHtml).join('')}</div>`:''}
+      </div>`).join('') || '<div style="font-size:13px;opacity:0.6;">No activities in this period.</div>'}
+  </${endCard}>`;
+}
+/* --- attachment summarising --- */
+function crLoadScript(src){ return new Promise((res,rej)=>{ if(document.querySelector('script[src="'+src+'"]')) return res(); const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+async function crExtractText(blob, name){
+  const ext = (name.split('.').pop()||'').toLowerCase();
+  if(['txt','csv','md'].includes(ext)) return await blob.text();
+  if(ext==='pdf'){
+    await crLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf = await window.pdfjsLib.getDocument({data: await blob.arrayBuffer()}).promise;
+    let t = ''; for(let i=1;i<=Math.min(pdf.numPages,30);i++){ const pg = await pdf.getPage(i); const c = await pg.getTextContent(); t += c.items.map(x=>x.str).join(' ')+'\n'; }
+    return t;
+  }
+  if(ext==='docx'){
+    await crLoadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+    const r = await window.mammoth.extractRawText({arrayBuffer: await blob.arrayBuffer()}); return r.value;
+  }
+  return '';
+}
+function crExtractiveSummary(text){
+  const clean = text.replace(/\s+/g,' ').trim(); if(!clean) return '';
+  const sents = clean.match(/[^.!?]+[.!?]+/g) || [clean];
+  const stop = new Set('the a an and or of to in on for with at by from is was were be been are this that it as we our their they he she his her i you'.split(' '));
+  const freq = {}; clean.toLowerCase().split(/[^a-z0-9]+/).forEach(w=>{ if(w.length>2 && !stop.has(w)) freq[w]=(freq[w]||0)+1; });
+  const scored = sents.map((s,i)=>({s:s.trim(), i, score:s.toLowerCase().split(/[^a-z0-9]+/).reduce((a,w)=>a+(freq[w]||0),0)/Math.sqrt(s.length+20)})).filter(x=>x.s.length>25);
+  const top = scored.sort((a,b)=>b.score-a.score).slice(0,4).sort((a,b)=>a.i-b.i).map(x=>x.s);
+  const words = clean.split(' ').length;
+  return (top.join(' ').slice(0,700) || clean.slice(0,400)) + ' ['+words+' words]';
+}
+function crCleanSummary(s){
+  return String(s||'').replace(/^#{1,6}\s*[^\n]*\n+/,'').replace(/^#{1,6}\s*/gm,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/__(.*?)__/g,'$1').replace(/^\s*[-*]\s+/gm,'• ').replace(/\n{3,}/g,'\n\n').trim();
+}
+const CR_BAD_SUMMARY = /provide the (content|text|document)|no (content|text) (was )?(provided|included)|i (don't|do not) see any|please (share|provide|paste)/i;
+function crIsBadSummary(a){ return !a.summary || CR_BAD_SUMMARY.test(a.summary); }
+async function crResummarise(path){
+  const { ents } = crBuild();
+  for(const en of ents) for(const act of en.acts) for(const a of act.attachments) if(a.path===path){ delete a.summary; }
+  await crSummariseAll(path);
+}
+async function crSummariseOne(a){
+  const { data:signed } = await sb.storage.from(a.path.startsWith('district') || STATE.districtFellowships.some(f=>(f.attachments||[]).some(x=>x.path===a.path)) ? FS_BUCKET : 'group-member-files').createSignedUrl(a.path, 600);
+  if(!signed) return null;
+  let text = '';
+  if(!isImageFile(a)){ try{ const blob = await (await fetch(signed.signedUrl)).blob(); text = (await crExtractText(blob, a.name)).slice(0, 60000); }catch(_){} }
+  if(!isImageFile(a) && !text.trim()){
+    const ext = (a.name.split('.').pop()||'').toLowerCase();
+    return { summary: ['doc','xls','xlsx','ppt','pptx'].includes(ext) ? 'This file type (.'+ext+') cannot be read automatically. Save it as PDF or .docx and re-attach to get a summary.' : 'No readable text was found in this file (it may be a scanned image — attach it as a photo instead).', summary_source:'extract' };
+  }
+  try{
+    const { data, error } = await sb.functions.invoke('summarize-attachment', { body:{ name:a.name, text, imageUrl:isImageFile(a)?signed.signedUrl:null } });
+    if(!error && data && data.summary && !CR_BAD_SUMMARY.test(data.summary)) return { summary:crCleanSummary(data.summary), summary_source:'ai' };
+  }catch(_){}
+  if(isImageFile(a)) return null;
+  const s = crExtractiveSummary(text);
+  return s ? { summary:s, summary_source:'extract' } : { summary:'No readable text could be extracted from this file type.', summary_source:'extract' };
+}
+async function crSummariseAll(onlyPath){
+  const { ents } = crBuild();
+  const jobs = []; ents.forEach(en=>en.acts.forEach(act=>act.attachments.forEach((a,i)=>{ if(onlyPath ? a.path===onlyPath : crIsBadSummary(a)) jobs.push({act, i, a}); })));
+  let done = 0;
+  for(const j of jobs){
+    UI.crBusy = (++done)+'/'+jobs.length; render();
+    const r = await crSummariseOne(j.a);
+    if(!r) continue;
+    Object.assign(j.a, r);
+    const rowKey = {mis_group_meetings:'groupMeetings', mis_district_fellowships:'districtFellowships', mis_events:'events'}[j.act.table];
+    const row = (STATE[rowKey]||[]).find(x=>x.id===j.act.rowId);
+    if(row){ row.attachments = (row.attachments||[]).map(x=>x.path===j.a.path?{...x, ...r}:x); await sb.from(j.act.table).update({attachments:row.attachments}).eq('id', row.id); }
+  }
+  UI.crBusy = null; render();
+  if(jobs.length) logAudit('Summarised report attachments', jobs.length+' file(s)');
+  showToast(jobs.length ? 'Attachment summaries updated.' : 'Nothing to summarise.');
+}
+function crPrint(){
+  const { P, ents } = crBuild();
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Consolidated Activity Report — ${esc(P.label)}</title><style>
+    body{font-family:Georgia,serif;color:#1d1f20;margin:26px;font-size:10.5pt;} h1{font-size:20pt;margin:0 0 4px;} h2{font-size:15pt;} h3{font-size:11.5pt;margin:14px 0 6px;}
+    table{border-collapse:collapse;width:100%;font-size:9.5pt;} th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;vertical-align:top;} th{background:#eee;}
+    .badge{display:inline-block;font-size:8.5pt;padding:1px 7px;border-radius:10px;color:#fff;} section:first-of-type{page-break-before:auto !important;}
+    @page{size:A4;margin:14mm;}
+  </style></head><body>
+    <h1>Consolidated Activity Report</h1>
+    <div style="color:#555;margin-bottom:6px;">${esc(P.label)} · ${fmtDate(P.from)} – ${fmtDate(P.to)} · ${ents.length} ${ents[0]?esc(ents[0].type.toLowerCase())+(ents.length===1?'':'s'):''} · Generated ${fmtDate(new Date().toISOString().slice(0,10))}${ME?' by '+esc(ME.name):''}</div>
+    ${ents.length>1?`<h3>Overview</h3><table><thead><tr><th>Name</th><th>Activities</th><th>Held</th><th>Cancelled</th><th>Postponed</th><th>Attendance / Offering</th></tr></thead><tbody>${ents.map(e=>`<tr><td>${esc(e.name)}</td><td>${e.acts.length}</td><td>${e.held}</td><td>${e.cancelled}</td><td>${e.postponed}</td><td>${e.type==='Group'?e.attendance:fmtKES(e.offering)}</td></tr>`).join('')}</tbody></table>`:''}
+    ${ents.map(en=>crEntityHtml(en, P, true)).join('')}
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if(!win){ showToast('Allow pop-ups to print the report.'); return; }
+  win.document.write(html); win.document.close(); win.focus(); setTimeout(()=>win.print(), 400);
+  logAudit('Printed consolidated activity report', P.label);
+}
+
+/* ---------------------------------------------------------------------
+   CHURCH HISTORY — milestones timeline, ministers & leaders through the
+   years, and an archive of documents/photos. Visible to every signed-in
+   role; edited by System Administrator and Church Secretary.
+--------------------------------------------------------------------- */
+const HISTORY_CATEGORIES = ['Founding','Building & Property','Ministry','Ordination & Installation','Milestone','Anniversary','Mission & Outreach','Other'];
+const HISTORY_TONE = { 'Founding':'var(--wine)', 'Building & Property':'var(--brass)', 'Ministry':'var(--navy)', 'Ordination & Installation':'var(--plum, #6b4c7a)', 'Milestone':'var(--forest)', 'Anniversary':'#c2185b', 'Mission & Outreach':'var(--teal, #2a7f7f)', 'Other':'#8a8a8a' };
+const LEADER_ROLES = ['Parish Minister','Assistant Minister','Evangelist','Session Clerk','Elder','LCC Chairperson','Treasurer','Other'];
+function canEditHistory(){ return canWrite(); }
+function historyDateLabel(e){
+  if(!e.entry_date) return '—';
+  const d = new Date(e.entry_date+'T00:00:00');
+  if(e.date_precision==='year') return String(d.getFullYear());
+  if(e.date_precision==='month') return d.toLocaleDateString('en-KE',{month:'long',year:'numeric'});
+  return fmtDate(e.entry_date);
+}
+function leaderTerm(l){ return (l.start_year||'?')+' – '+(l.end_year||'Present'); }
+function renderHistory(){
+  const canEdit = canEditHistory(), tab = UI.historyTab||'Timeline';
+  const entries = STATE.historyEntries||[], leaders = STATE.historyLeaders||[];
+  const first = entries.filter(e=>e.entry_date).map(e=>e.entry_date).sort()[0];
+  const founded = entries.find(e=>e.category==='Founding' && e.entry_date) || (first?{entry_date:first}:null);
+  const years = founded ? new Date().getFullYear() - new Date(founded.entry_date).getFullYear() : null;
+  const files = [...entries.flatMap(e=>(e.attachments||[]).map(a=>({...a, entry:e})))];
+  const actions = canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-ghost" style="white-space:nowrap;" onclick="openLeaderModal(null)">+ Add leader</button><button class="btn" style="white-space:nowrap;" onclick="openHistoryModal(null)">+ Add milestone</button></div>` : '';
+  const tabs = ['Timeline','Ministers & Leaders','Archive'];
+  return `
+    ${sectionHeader('Church History', founded?'Since '+new Date(founded.entry_date).getFullYear()+(years?' · '+years+' years of ministry':''):'The story of our congregation', actions)}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px;">
+      ${statCard('Milestones', entries.length, 'recorded')}
+      ${statCard('Parish ministers', leaders.filter(l=>l.role==='Parish Minister').length, (()=>{ const c = leaders.find(l=>l.role==='Parish Minister' && !l.end_year); return c?'Current: '+c.name:'none current'; })())}
+      ${statCard('Leaders recorded', leaders.length, 'all roles')}
+      ${statCard('Archive', files.length, files.filter(isImageFile).length+' photos · '+files.filter(a=>!isImageFile(a)).length+' documents')}
+    </div>
+    <div style="display:flex;gap:20px;border-bottom:1px solid var(--rule);margin-bottom:20px;flex-wrap:wrap;">
+      ${tabs.map(t=>`<button onclick="setUI({historyTab:'${t}'})" style="background:none;border:none;padding-bottom:9px;font-size:13.5px;border-bottom:2px solid ${tab===t?'var(--brass)':'transparent'};color:${tab===t?'var(--ink)':'var(--charcoal)'};font-weight:${tab===t?'600':'400'};">${t}</button>`).join('')}
+    </div>
+    ${tab==='Timeline' ? renderHistoryTimeline(entries, canEdit) : tab==='Ministers & Leaders' ? renderHistoryLeaders(leaders, canEdit) : renderHistoryArchive(files)}
+  `;
+}
+function renderHistoryTimeline(entries, canEdit){
+  const q = (UI.historySearch||'').trim().toLowerCase(), cat = UI.historyCategory||'All', order = UI.historyOrder||'asc';
+  let list = entries.filter(e=>(cat==='All'||e.category===cat) && (!q || [e.title,e.description,e.people].some(x=>(x||'').toLowerCase().includes(q))));
+  list = [...list].sort((a,b)=>(a.entry_date||'').localeCompare(b.entry_date||'')*(order==='asc'?1:-1));
+  const byDecade = {}; list.forEach(e=>{ const y = e.entry_date?new Date(e.entry_date).getFullYear():null; const k = y?Math.floor(y/10)*10+'s':'Undated'; (byDecade[k]=byDecade[k]||[]).push(e); });
+  return `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px;">
+      <input class="field-input" style="max-width:260px;" placeholder="Search milestones or people" value="${esc(UI.historySearch||'')}" oninput="setUI({historySearch:this.value})">
+      <select class="field-input" style="max-width:220px;" onchange="setUI({historyCategory:this.value})"><option value="All">All categories</option>${HISTORY_CATEGORIES.map(c=>`<option ${cat===c?'selected':''}>${c}</option>`).join('')}</select>
+      <button class="btn-ghost" style="white-space:nowrap;" onclick="setUI({historyOrder:'${order==='asc'?'desc':'asc'}'})">${order==='asc'?'Oldest first ↓':'Newest first ↑'}</button>
+    </div>
+    ${Object.keys(byDecade).map(dec=>`
+      <div style="display:flex;align-items:baseline;gap:12px;margin:8px 0 12px;"><div style="font-family:var(--font-serif);font-size:24px;color:var(--brass);">${dec}</div><div style="flex:1;border-top:1px solid var(--rule);"></div></div>
+      <div style="border-left:2px solid var(--rule);margin-left:8px;padding-left:22px;display:flex;flex-direction:column;gap:14px;margin-bottom:22px;">
+        ${byDecade[dec].map(e=>`
+          <div style="position:relative;">
+            <span style="position:absolute;left:-30px;top:16px;width:14px;height:14px;border-radius:50%;background:${HISTORY_TONE[e.category]||'#8a8a8a'};border:3px solid var(--paper);"></span>
+            <div class="card" style="cursor:pointer;" onclick="openHistoryView('${e.id}')">
+              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px;">
+                <div style="font-size:12.5px;font-weight:600;color:var(--brass);">${historyDateLabel(e)}</div>
+                <span class="badge" style="background:${HISTORY_TONE[e.category]||'#8a8a8a'};">${esc(e.category||'Other')}</span>
+              </div>
+              <div style="font-family:var(--font-serif);font-size:18px;line-height:1.3;margin-bottom:6px;">${esc(e.title)}</div>
+              ${e.description?`<div style="font-size:13.5px;line-height:1.55;opacity:0.85;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;">${esc(e.description)}</div>`:''}
+              ${e.people?`<div style="font-size:12px;opacity:0.65;margin-top:8px;">People: ${esc(e.people)}</div>`:''}
+              ${(e.attachments||[]).filter(isImageFile).length ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">${e.attachments.filter(isImageFile).slice(0,4).map(a=>`<img data-signed-path="${esc(a.path)}" alt="" style="width:72px;height:72px;object-fit:cover;background:var(--rule-light);border:1px solid var(--rule);">`).join('')}${e.attachments.filter(isImageFile).length>4?`<div style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--rule-light);">+${e.attachments.filter(isImageFile).length-4}</div>`:''}</div>` : ''}
+              ${(e.attachments||[]).filter(a=>!isImageFile(a)).length ? `<div style="font-size:12px;opacity:0.65;margin-top:8px;">📎 ${e.attachments.filter(a=>!isImageFile(a)).length} document(s)</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>`).join('') || `<div class="card" style="text-align:center;padding:36px;"><div style="font-family:var(--font-serif);font-size:18px;margin-bottom:6px;">${entries.length?'No milestones match.':'No history recorded yet'}</div><div style="font-size:13px;opacity:0.65;margin-bottom:14px;">${entries.length?'Try a different search or category.':'Start with the founding of the congregation, then add buildings, ministers and key moments.'}</div>${canEdit&&!entries.length?'<button class="btn" onclick="openHistoryModal(null)">+ Add first milestone</button>':''}</div>`}
+  `;
+}
+function renderHistoryLeaders(leaders, canEdit){
+  const role = UI.historyLeaderRole||'All';
+  const roles = LEADER_ROLES.filter(r=>leaders.some(l=>l.role===r));
+  const list = leaders.filter(l=>role==='All'||l.role===role).sort((a,b)=>(num(b.start_year)||0)-(num(a.start_year)||0));
+  return `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">${['All',...roles].map(r=>`<button class="btn-ghost" style="white-space:nowrap;${role===r?'border-color:var(--brass);font-weight:600;':'border-color:var(--rule);'}" onclick="setUI({historyLeaderRole:'${r}'})">${r==='All'?'All roles':r}</button>`).join('')}</div>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Term</th><th>Years</th><th>Notes</th>${canEdit?'<th></th>':''}</tr></thead><tbody>
+      ${list.map(l=>{ const yrs = l.start_year ? ((num(l.end_year)||new Date().getFullYear()) - num(l.start_year)) : null; return `<tr>
+        <td style="font-weight:600;">${esc(l.name)}${!l.end_year?' <span class="badge" style="background:var(--forest);margin-left:6px;">Current</span>':''}</td>
+        <td>${esc(l.role)}</td><td style="white-space:nowrap;">${leaderTerm(l)}</td><td>${yrs!==null?yrs:'—'}</td>
+        <td style="font-size:12.5px;max-width:320px;white-space:pre-wrap;">${esc(l.notes||'')}</td>
+        ${canEdit?`<td style="white-space:nowrap;"><button class="btn-ghost" style="padding:3px 9px;font-size:11.5px;" onclick="openLeaderModal('${l.id}')">Edit</button> <button class="btn-danger" onclick="deleteLeader('${l.id}')">Delete</button></td>`:''}
+      </tr>`; }).join('') || `<tr><td colspan="6" style="opacity:0.55;">No leaders recorded yet.</td></tr>`}
+    </tbody></table></div>`;
+}
+function renderHistoryArchive(files){
+  const kind = UI.historyArchiveKind||'Photos';
+  const list = files.filter(a=>kind==='Photos'?isImageFile(a):!isImageFile(a)).sort((a,b)=>(a.entry.entry_date||'').localeCompare(b.entry.entry_date||''));
+  return `
+    <div style="display:flex;gap:6px;margin-bottom:16px;">${['Photos','Documents'].map(k=>`<button class="btn-ghost" style="${kind===k?'border-color:var(--brass);font-weight:600;':'border-color:var(--rule);'}" onclick="setUI({historyArchiveKind:'${k}'})">${k}</button>`).join('')}</div>
+    ${kind==='Photos' ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;">${list.map(a=>`<a href="#" onclick="openMeetingAttachment('${esc(a.path)}');return false;" style="display:block;color:inherit;text-decoration:none;"><div style="aspect-ratio:4/3;background:var(--rule-light);border:1px solid var(--rule);overflow:hidden;"><img data-signed-path="${esc(a.path)}" alt="${esc(a.name)}" style="width:100%;height:100%;object-fit:cover;display:block;"></div><div style="font-size:12px;margin-top:5px;line-height:1.35;"><strong>${esc(a.entry.title)}</strong><div style="opacity:0.6;">${historyDateLabel(a.entry)}</div></div></a>`).join('') || '<div style="opacity:0.6;font-size:13.5px;">No photos yet — attach them to milestones.</div>'}</div>`
+    : `<div class="table-wrap"><table><thead><tr><th>Document</th><th>Milestone</th><th>Date</th></tr></thead><tbody>${list.map(a=>`<tr style="cursor:pointer;" onclick="openMeetingAttachment('${esc(a.path)}')"><td style="color:var(--brass);">📎 ${esc(a.name)}</td><td>${esc(a.entry.title)}</td><td>${historyDateLabel(a.entry)}</td></tr>`).join('') || '<tr><td colspan="3" style="opacity:0.55;">No documents yet — attach them to milestones.</td></tr>'}</tbody></table></div>`}`;
+}
+function openHistoryView(id){ UI.modal='historyView'; UI.modalProps={id}; render(); }
+function historyViewModalBody(){
+  const e = (STATE.historyEntries||[]).find(x=>x.id===UI.modalProps.id);
+  if(!e) return '<p>Not found.</p>';
+  return `
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;"><span class="badge" style="background:${HISTORY_TONE[e.category]||'#8a8a8a'};">${esc(e.category||'Other')}</span><span style="font-size:13px;font-weight:600;color:var(--brass);">${historyDateLabel(e)}</span></div>
+    <h2 style="font-size:21px;line-height:1.3;margin-bottom:14px;">${esc(e.title)}</h2>
+    ${e.description?`<div style="font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:14px;">${esc(e.description)}</div>`:''}
+    ${e.people?`<div style="font-size:13px;margin-bottom:6px;"><span style="opacity:0.6;">People involved:</span> ${esc(e.people)}</div>`:''}
+    ${e.source?`<div style="font-size:13px;margin-bottom:6px;"><span style="opacity:0.6;">Source:</span> ${esc(e.source)}</div>`:''}
+    ${(e.attachments||[]).length?`<h3 style="font-size:13.5px;margin:16px 0 4px;">Documents &amp; photos</h3>${meetingFilesView(e.attachments)}`:''}
+    <div style="font-size:11px;opacity:0.5;margin-top:16px;">${e.created_by?'Recorded by '+esc(e.created_by):''}</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;">
+      ${canEditHistory()?`<button class="btn-danger" style="margin-right:auto;" onclick="deleteHistoryEntry('${e.id}')">Delete</button><button class="btn-ghost" onclick="openHistoryModal('${e.id}')">Edit / attach files</button>`:''}
+      <button class="btn-ghost" onclick="setUI({modal:null})">Close</button>
+    </div>`;
+}
+function openHistoryModal(id){
+  const e = id ? STATE.historyEntries.find(x=>x.id===id) : null;
+  UI.modal='history';
+  UI.modalProps = e ? { id, date:e.entry_date||'', precision:e.date_precision||'day', title:e.title||'', category:e.category||'Milestone', description:e.description||'', people:e.people||'', source:e.source||'', attachments:[...(e.attachments||[])], removed:[], pendingFiles:[] }
+    : { id:null, date:'', precision:'year', title:'', category:'Milestone', description:'', people:'', source:'', attachments:[], removed:[], pendingFiles:[] };
+  UI.modalErrors = {}; render();
+}
+function historyModalBody(){
+  const p = UI.modalProps, e = UI.modalErrors||{};
+  const yr = p.date ? p.date.slice(0,4) : '', mo = p.date ? p.date.slice(5,7) : '01';
+  const dateInput = p.precision==='year' ? `<input type="text" inputmode="numeric" maxlength="4" class="field-input" placeholder="e.g. 1956" value="${yr}" oninput="setModalPropQuiet('date', /^\\d{4}$/.test(this.value)?this.value+'-01-01':'')">`
+    : p.precision==='month' ? `<input type="month" class="field-input" value="${yr?yr+'-'+mo:''}" onchange="setModalPropQuiet('date', this.value?this.value+'-01':'')">`
+    : `<input type="date" class="field-input" value="${p.date}" onchange="setModalPropQuiet('date',this.value)">`;
+  return `
+    <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit milestone':'Add milestone'}</h2>
+    ${field('Title', `<input class="field-input" placeholder="e.g. Foundation stone laid for the new sanctuary" value="${esc(p.title)}" oninput="setModalPropQuiet('title',this.value)">`, e.title)}
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${field('Date known to', `<select class="field-input" onchange="setModalProp('precision',this.value)">${[['year','Year only'],['month','Month & year'],['day','Exact date']].map(([v,l])=>`<option value="${v}" ${p.precision===v?'selected':''}>${l}</option>`).join('')}</select>`)}
+      ${field('Date', dateInput, e.date)}
+    </div>
+    ${field('Category', `<select class="field-input" onchange="setModalPropQuiet('category',this.value)">${HISTORY_CATEGORIES.map(c=>`<option ${p.category===c?'selected':''}>${c}</option>`).join('')}</select>`)}
+    ${field('Story / description', `<textarea class="field-input" rows="5" oninput="setModalPropQuiet('description',this.value)">${esc(p.description)}</textarea>`)}
+    ${field('People involved (optional)', `<input class="field-input" list="assigneeSuggestions" placeholder="e.g. Rev. J. Kamau, Elder M. Wanjiru" value="${esc(p.people)}" oninput="setModalPropQuiet('people',this.value)">${assigneeOptionsHtml()}`)}
+    ${field('Source (optional)', `<input class="field-input" placeholder="e.g. Session minutes 1972, oral account" value="${esc(p.source)}" oninput="setModalPropQuiet('source',this.value)">`)}
+    <label class="field-label">Documents &amp; photos</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📄 Add documents<input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">🖼 Add photos<input type="file" multiple accept="image/*" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📷 Take photo<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+    </div>
+    ${p.attachments.map((a,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="display:flex;align-items:center;gap:8px;min-width:0;">${isImageFile(a)?`<img data-signed-path="${esc(a.path)}" style="width:36px;height:36px;object-fit:cover;background:var(--rule-light);flex:none;">`:'📎'}<span style="overflow-wrap:anywhere;">${esc(a.name)}</span></span><button class="btn-danger" onclick="removeExistingMeetingFile(${i})">Remove</button></div>`).join('')}
+    ${p.pendingFiles.map((f,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="overflow-wrap:anywhere;">${f.type&&f.type.startsWith('image/')?'🖼':'📎'} ${esc(f.name)} <span style="opacity:0.55;">(new)</span></span><button class="btn-danger" onclick="removePendingMeetingFile(${i})">Remove</button></div>`).join('')}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+      <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
+      <button class="btn" onclick="saveHistoryEntry()">${p.id?'Save changes':'Add milestone'}</button>
+    </div>`;
+}
+async function saveHistoryEntry(){
+  const p = UI.modalProps;
+  if(!canEditHistory()) return;
+  UI.modalErrors = { title:p.title.trim()?'':'Enter a title.', date:p.date?'':'Enter a date (a year is enough).' };
+  if(Object.values(UI.modalErrors).some(Boolean)){ render(); return; }
+  const payload = { entry_date:p.date, date_precision:p.precision, title:p.title.trim(), category:p.category, description:p.description.trim()||null, people:p.people.trim()||null, source:p.source.trim()||null };
+  await withBusyState(async ()=>{
+    const res = p.id ? await sb.from('mis_church_history').update(payload).eq('id', p.id).select().single() : await sb.from('mis_church_history').insert({...payload, attachments:[], created_by:ME?ME.name:null}).select().single();
+    if(res.error){ showToast('Could not save: '+res.error.message); return; }
+    const id = res.data.id, attachments = [...p.attachments];
+    for(const file of p.pendingFiles){
+      const path = `history/${id}-${Date.now()}-${file.name.replace(/[^\w.\-]+/g,'_')}`;
+      const { error } = await sb.storage.from('group-member-files').upload(path, file, { contentType:file.type });
+      if(error) showToast('Could not upload '+file.name+': '+error.message); else attachments.push({path, name:file.name});
+    }
+    if(p.removed.length) await sb.storage.from('group-member-files').remove(p.removed.map(a=>a.path));
+    if(p.pendingFiles.length || p.removed.length) await sb.from('mis_church_history').update({attachments}).eq('id', id);
+    await logAudit(p.id?'Updated church history':'Added church history', p.title.trim());
+    await refetch('historyEntries');
+    UI.modal='historyView'; UI.modalProps={id}; render(); showToast(p.id?'Milestone updated.':'Milestone added.');
+  });
+}
+async function deleteHistoryEntry(id){
+  const e = STATE.historyEntries.find(x=>x.id===id);
+  if(!e || !confirm('Delete "'+e.title+'" and its files? This cannot be undone.')) return;
+  await withBusyState(async ()=>{
+    const { error } = await sb.from('mis_church_history').delete().eq('id', id);
+    if(error){ showToast('Could not delete: '+error.message); return; }
+    if((e.attachments||[]).length) await sb.storage.from('group-member-files').remove(e.attachments.map(a=>a.path));
+    await logAudit('Deleted church history', e.title);
+    await refetch('historyEntries'); UI.modal=null; render(); showToast('Milestone deleted.');
+  });
+}
+function openLeaderModal(id){
+  const l = id ? STATE.historyLeaders.find(x=>x.id===id) : null;
+  UI.modal='historyLeader';
+  UI.modalProps = l ? { id, name:l.name||'', role:l.role||'Parish Minister', start:l.start_year||'', end:l.end_year||'', notes:l.notes||'' } : { id:null, name:'', role:'Parish Minister', start:'', end:'', notes:'' };
+  UI.modalErrors = {}; render();
+}
+function leaderModalBody(){
+  const p = UI.modalProps, e = UI.modalErrors||{};
+  return `
+    <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit leader':'Add leader'}</h2>
+    ${field('Name', `<input class="field-input" list="assigneeSuggestions" placeholder="e.g. Rev. Peter Njoroge" value="${esc(p.name)}" oninput="setModalPropQuiet('name',this.value)">${assigneeOptionsHtml()}`, e.name)}
+    ${field('Role', `<select class="field-input" onchange="setModalPropQuiet('role',this.value)">${LEADER_ROLES.map(r=>`<option ${p.role===r?'selected':''}>${r}</option>`).join('')}</select>`)}
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${field('From (year)', `<input type="text" inputmode="numeric" maxlength="4" class="field-input" placeholder="e.g. 1998" value="${p.start}" oninput="setModalPropQuiet('start',this.value)">`, e.start)}
+      ${field('To (year — leave blank if current)', `<input type="text" inputmode="numeric" maxlength="4" class="field-input" placeholder="Present" value="${p.end}" oninput="setModalPropQuiet('end',this.value)">`, e.end)}
+    </div>
+    ${field('Notes (optional)', `<textarea class="field-input" rows="3" placeholder="e.g. Oversaw construction of the new sanctuary" oninput="setModalPropQuiet('notes',this.value)">${esc(p.notes)}</textarea>`)}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+      <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
+      <button class="btn" onclick="saveLeader()">${p.id?'Save changes':'Add leader'}</button>
+    </div>`;
+}
+async function saveLeader(){
+  const p = UI.modalProps, yr = v => /^\d{4}$/.test(String(v).trim());
+  UI.modalErrors = { name:p.name.trim()?'':'Enter a name.', start:yr(p.start)?'':'Enter a 4-digit year.', end:!String(p.end).trim()||(yr(p.end)&&+p.end>=+p.start)?'':'Enter a 4-digit year on or after the start.' };
+  if(Object.values(UI.modalErrors).some(Boolean)){ render(); return; }
+  const payload = { name:p.name.trim(), role:p.role, start_year:+p.start, end_year:String(p.end).trim()?+p.end:null, notes:p.notes.trim()||null };
+  await withBusyState(async ()=>{
+    const { error } = p.id ? await sb.from('mis_church_leaders').update(payload).eq('id', p.id) : await sb.from('mis_church_leaders').insert(payload);
+    if(error){ showToast('Could not save: '+error.message); return; }
+    await logAudit(p.id?'Updated church leader record':'Added church leader record', payload.name+' ('+payload.role+')');
+    await refetch('historyLeaders'); UI.modal=null; UI.historyTab='Ministers & Leaders'; render(); showToast('Saved.');
+  });
+}
+async function deleteLeader(id){
+  const l = STATE.historyLeaders.find(x=>x.id===id);
+  if(!l || !confirm('Delete '+l.name+' ('+l.role+')?')) return;
+  await withBusyState(async ()=>{
+    const { error } = await sb.from('mis_church_leaders').delete().eq('id', id);
+    if(error){ showToast('Could not delete: '+error.message); return; }
+    await logAudit('Deleted church leader record', l.name);
+    await refetch('historyLeaders'); render();
+  });
+}
+
+/* ---- District fellowships & meetings ---- */
+const FS_BUCKET = 'district-fellowship-files';
+const FS_STATUSES = ['Scheduled','Held','Cancelled'];
+const FS_TONE = { Scheduled:'var(--navy)', Held:'var(--forest)', Cancelled:'#8a8a8a' };
+function fsScope(){ return PASTORAL_DISTRICT_ROLES.includes(sessionRole()) ? sessionDistrictId() : null; }
+function canEditFellowship(districtId){
+  if(canWrite()) return true;
+  const d = fsScope(); return !!d && (!districtId || districtId===d);
+}
+function fsStatus(f){
+  if(f.status==='Cancelled') return 'Cancelled';
+  if(f.status==='Held') return 'Held';
+  return (f.fellowship_date||'') < new Date().toISOString().slice(0,10) ? 'Held' : 'Scheduled';
+}
+function fsVisible(){
+  const d = fsScope() || (UI.fsDistrict && UI.fsDistrict!=='All' ? UI.fsDistrict : null);
+  return (STATE.districtFellowships||[]).filter(f=>!d || f.district_id===d);
+}
+function renderDistrictFellowships(){
+  const scope = fsScope(), canAdd = canEditFellowship(scope), view = UI.fsView||'List';
+  const list = fsVisible(), today = new Date().toISOString().slice(0,10);
+  const upcoming = list.filter(f=>f.fellowship_date>=today && f.status!=='Cancelled').sort((a,b)=>(a.fellowship_date+(a.start_time||'')).localeCompare(b.fellowship_date+(b.start_time||'')));
+  const past = list.filter(f=>!upcoming.includes(f));
+  const held = list.filter(f=>fsStatus(f)==='Held');
+  const offering = held.reduce((s,f)=>s+num(f.offering),0);
+  const row = f => `<tr style="cursor:pointer;" onclick="openFellowshipModal('${f.id}')">
+      <td style="white-space:nowrap;">${fmtDate(f.fellowship_date)}${f.start_time?`<div style="font-size:11.5px;opacity:0.6;">${fmtTime(f.start_time)}</div>`:''}</td>
+      ${scope?'':`<td>${esc(districtName(f.district_id))}</td>`}
+      <td>${esc(f.venue||'—')}</td><td>${esc(f.service_leader||'—')}</td><td>${esc(f.preacher||'—')}</td>
+      <td style="max-width:220px;font-size:12.5px;">${esc(f.readings||'—')}</td>
+      <td style="text-align:right;white-space:nowrap;">${f.offering!=null&&f.offering!==''?fmtKES(num(f.offering)):'—'}</td>
+      <td style="text-align:center;">${(f.attachments||[]).length?'📎 '+(f.attachments||[]).length:''}</td>
+      <td><span class="badge" style="background:${FS_TONE[fsStatus(f)]};">${fsStatus(f)}</span></td>
+    </tr>`;
+  const table = (rows, empty) => `<div class="table-wrap"><table><thead><tr><th>Date</th>${scope?'':'<th>District</th>'}<th>Venue</th><th>Service leader</th><th>Preacher</th><th>Readings</th><th style="text-align:right;">Offering</th><th>Files</th><th>Status</th></tr></thead><tbody>${rows.map(row).join('') || `<tr><td colspan="9" style="opacity:0.55;">${empty}</td></tr>`}</tbody></table></div>`;
+  return `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;">
+      ${scope ? `<div style="font-size:13px;opacity:0.75;">${esc(districtName(scope))} district</div>` : `<select class="field-input" style="max-width:220px;" onchange="setUI({fsDistrict:this.value})"><option value="All">All districts</option>${STATE.districts.map(d=>`<option value="${d.id}" ${UI.fsDistrict===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select>`}
+      <div style="display:flex;gap:6px;">${['List','Calendar'].map(v=>`<button class="btn-ghost" style="${view===v?'border-color:var(--brass);font-weight:600;':'border-color:var(--rule);'}" onclick="setUI({fsView:'${v}'})">${v}</button>`).join('')}</div>
+      <div style="flex:1;"></div>
+      ${canAdd ? `<button class="btn" style="white-space:nowrap;" onclick="openFellowshipModal(null)">+ Schedule fellowship</button>` : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px;">
+      ${statCard('Upcoming', upcoming.length, upcoming[0]?'Next: '+fmtDate(upcoming[0].fellowship_date):'none scheduled')}
+      ${statCard('Held', held.length, 'fellowships & meetings')}
+      ${statCard('Offering', fmtKES(offering), 'from held fellowships')}
+    </div>
+    ${view==='Calendar' ? renderFellowshipCalendar(list, canAdd) : `
+      <h3 style="font-size:15px;margin-bottom:10px;">Upcoming schedule <span style="font-weight:400;opacity:0.55;font-size:12.5px;">(${upcoming.length})</span></h3>
+      ${table(upcoming, 'Nothing scheduled yet.')}
+      <h3 style="font-size:15px;margin:24px 0 10px;">Past &amp; cancelled <span style="font-weight:400;opacity:0.55;font-size:12.5px;">(${past.length})</span></h3>
+      ${table(past.sort((a,b)=>(b.fellowship_date||'').localeCompare(a.fellowship_date||'')), 'No past fellowships recorded.')}`}
+  `;
+}
+function renderFellowshipCalendar(list, canAdd){
+  const now = new Date();
+  const year = UI.fsCalYear ?? now.getFullYear(), month = UI.fsCalMonth ?? now.getMonth();
+  const first = new Date(year, month, 1), startDow = first.getDay(), dim = new Date(year, month+1, 0).getDate();
+  const todayISO = now.toISOString().slice(0,10), byDate = {};
+  list.forEach(f=>(byDate[f.fellowship_date]=byDate[f.fellowship_date]||[]).push(f));
+  let cells = '';
+  for(let i=0;i<startDow;i++) cells += '<div></div>';
+  for(let d=1; d<=dim; d++){
+    const iso = year+'-'+String(month+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'), items = byDate[iso]||[], isToday = iso===todayISO;
+    cells += `<div ${canAdd?`onclick="if(event.target===this||event.target.dataset.day)openFellowshipModal(null,'${iso}')"`:''} style="min-height:78px;padding:6px 4px;border:1px solid ${isToday?'var(--brass)':'var(--rule-light)'};border-radius:3px;background:#fff;display:flex;flex-direction:column;gap:3px;min-width:0;${canAdd?'cursor:pointer;':''}">
+      <span data-day="1" style="font-size:12px;font-weight:${isToday?'700':'400'};color:${isToday?'var(--brass)':'var(--charcoal)'};">${d}</span>
+      ${items.map(f=>`<span onclick="event.stopPropagation();openFellowshipModal('${f.id}')" title="${esc(districtName(f.district_id))} · ${esc(f.venue||'')}" style="cursor:pointer;border-left:3px solid ${FS_TONE[fsStatus(f)]};font-size:10.5px;background:var(--rule-light);border-radius:8px;padding:1px 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${f.status==='Cancelled'?'text-decoration:line-through;opacity:0.6;':''}">${f.start_time?fmtTime(f.start_time)+' ':''}${esc(fsScope()?(f.venue||'Fellowship'):districtName(f.district_id))}</span>`).join('')}
+    </div>`;
+  }
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <button class="btn-ghost" style="padding:5px 12px;" onclick="fsCalMove(-1)">← Prev</button>
+      <div style="font-family:var(--font-serif);font-size:16px;">${first.toLocaleDateString('en-KE',{month:'long',year:'numeric'})}</div>
+      <button class="btn-ghost" style="padding:5px 12px;" onclick="fsCalMove(1)">Next →</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;font-size:11px;opacity:0.55;margin-bottom:4px;">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;">${cells}</div>
+    ${canAdd?'<div style="font-size:11.5px;opacity:0.55;margin-top:10px;">Click a day to schedule a fellowship on that date.</div>':''}
+  </div>`;
+}
+function fsCalMove(n){
+  const now = new Date(); let y = UI.fsCalYear ?? now.getFullYear(), mo = (UI.fsCalMonth ?? now.getMonth()) + n;
+  if(mo<0){ mo=11; y--; } if(mo>11){ mo=0; y++; }
+  setUI({fsCalYear:y, fsCalMonth:mo});
+}
+function openFellowshipModal(id, date){
+  const f = id ? STATE.districtFellowships.find(x=>x.id===id) : null;
+  UI.modal = 'fellowship';
+  UI.modalProps = f ? { id:f.id, district:f.district_id, date:f.fellowship_date, time:f.start_time?String(f.start_time).slice(0,5):'', venue:f.venue||'', leader:f.service_leader||'', preacher:f.preacher||'', readings:f.readings||'', offering:f.offering??'', status:f.status||'Scheduled', cancelReason:f.cancel_reason||'', notes:f.notes||'', attachments:[...(f.attachments||[])], removed:[], pendingFiles:[], editing:false }
+    : { id:null, district:fsScope()||(UI.fsDistrict&&UI.fsDistrict!=='All'?UI.fsDistrict:(STATE.districts[0]||{}).id), date:date||new Date().toISOString().slice(0,10), time:'', venue:'', leader:'', preacher:'', readings:'', offering:'', status:'Scheduled', cancelReason:'', notes:'', attachments:[], removed:[], pendingFiles:[], editing:true };
+  UI.modalErrors = {};
+  render();
+}
+function fsAddFiles(input){ UI.modalProps.pendingFiles = [...UI.modalProps.pendingFiles, ...Array.from(input.files||[])]; input.value=''; render(); }
+function fsRemovePending(i){ UI.modalProps.pendingFiles = UI.modalProps.pendingFiles.filter((_,x)=>x!==i); render(); }
+function fsRemoveExisting(i){ const p = UI.modalProps; p.removed.push(p.attachments[i]); p.attachments = p.attachments.filter((_,x)=>x!==i); render(); }
+async function fsOpenFile(path){
+  const { data, error } = await sb.storage.from(FS_BUCKET).createSignedUrl(path, 3600);
+  if(error || !data) { showToast('Could not open file.'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+function fellowshipModalBody(){
+  const p = UI.modalProps, e = UI.modalErrors||{}, canEdit = canEditFellowship(p.district);
+  const fileList = `${p.attachments.map((a,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--rule-light);"><a href="#" onclick="fsOpenFile('${esc(a.path)}');return false;" style="color:var(--brass);overflow-wrap:anywhere;">📎 ${esc(a.name)}</a>${p.editing?`<button class="btn-ghost" style="padding:2px 8px;font-size:11.5px;" onclick="fsRemoveExisting(${i})">Remove</button>`:''}</div>`).join('')}
+    ${p.pendingFiles.map((f,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--rule-light);"><span style="overflow-wrap:anywhere;">📎 ${esc(f.name)} <span style="opacity:0.55;">(new)</span></span><button class="btn-ghost" style="padding:2px 8px;font-size:11.5px;" onclick="fsRemovePending(${i})">Remove</button></div>`).join('')}`;
+  if(!p.editing){
+    const f = STATE.districtFellowships.find(x=>x.id===p.id) || {};
+    const kv = (k,v)=>`<div style="min-width:0;"><div style="font-size:11.5px;opacity:0.6;margin-bottom:3px;">${k}</div><div style="font-size:14px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;">${v}</div></div>`;
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;">
+        <div><h2 style="font-size:19px;margin:0 0 4px;">${esc(districtName(p.district))} fellowship</h2><span class="badge" style="background:${FS_TONE[fsStatus(f)]};">${fsStatus(f)}</span></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:16px;">
+        ${kv('Date', fmtDate(p.date)+(p.time?' · '+fmtTime(p.time):''))}
+        ${kv('Venue', esc(p.venue||'—'))}
+        ${kv('Service leader', esc(p.leader||'—'))}
+        ${kv('Preacher', esc(p.preacher||'—'))}
+        ${kv('Readings', esc(p.readings||'—'))}
+        ${kv('Offering', p.offering!==''&&p.offering!=null?fmtKES(num(p.offering)):'—')}
+      </div>
+      ${p.status==='Cancelled'?`<div style="margin-bottom:14px;">${kv('Reason for cancellation', `<span style="color:#DC143C;">${esc(p.cancelReason||'Not recorded')}</span>`)}</div>`:''}
+      ${p.notes?kv('Notes', esc(p.notes)):''}
+      <div style="margin-top:16px;"><div style="font-size:11.5px;opacity:0.6;margin-bottom:4px;">Attachments</div>${p.attachments.length?fileList:'<div style="font-size:13px;opacity:0.55;">None</div>'}</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:22px;flex-wrap:wrap;">
+        ${canEdit?`<button class="btn-danger" style="margin-right:auto;" onclick="deleteFellowship('${p.id}')">Delete</button>`:''}
+        <button class="btn-ghost" onclick="setUI({modal:null})">Close</button>
+        ${canEdit?`<button class="btn" onclick="UI.modalProps.editing=true;render()">Edit</button>`:''}
+      </div>`;
+  }
+  const scope = fsScope(), dId = scope || p.district;
+  const dMembers = STATE.members.filter(m=>m.district_id===dId);
+  const dIds = new Set(dMembers.map(m=>m.id));
+  const people = [...new Set([...dMembers.map(m=>m.name), ...STATE.households.filter(x=>dIds.has(x.owner_member_id) && !isChild(x)).map(x=>x.name)].filter(Boolean))].sort();
+  const venues = [...new Set([...STATE.districtFellowships.filter(f=>f.district_id===dId).map(f=>f.venue), ...dMembers.map(m=>'Home of '+m.name)].filter(Boolean))];
+  return `
+    <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit fellowship / meeting':'Schedule fellowship / meeting'}</h2>
+    <datalist id="fsPeople">${people.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>
+    <datalist id="fsVenues">${venues.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>
+    ${field('District', scope ? `<input class="field-input" value="${esc(districtName(scope))}" disabled>` : `<select class="field-input" onchange="setModalProp('district',this.value)">${STATE.districts.map(d=>`<option value="${d.id}" ${p.district===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select>`, e.district)}
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${field('Date', `<input type="date" class="field-input" value="${p.date}" onchange="setModalPropQuiet('date',this.value)">`, e.date)}
+      ${field('Start time (optional)', `<input type="time" class="field-input" value="${p.time}" onchange="setModalPropQuiet('time',this.value)">`)}
+    </div>
+    ${field('Venue', `<input class="field-input" list="fsVenues" placeholder="Pick a district home or type a venue" value="${esc(p.venue)}" oninput="setModalPropQuiet('venue',this.value)">`, e.venue)}
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${field('Service leader', `<input class="field-input" list="fsPeople" placeholder="District member, or type a guest's name" value="${esc(p.leader)}" oninput="setModalPropQuiet('leader',this.value)">`)}
+      ${field('Preacher', `<input class="field-input" list="fsPeople" placeholder="District member, or type a guest's name" value="${esc(p.preacher)}" oninput="setModalPropQuiet('preacher',this.value)">`)}
+    </div>
+    ${field('Readings', `<textarea class="field-input" rows="2" placeholder="e.g. Psalm 23; John 10:1–18" oninput="setModalPropQuiet('readings',this.value)">${esc(p.readings)}</textarea>`)}
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${field('Offering (KES)', `<input type="text" inputmode="numeric" class="field-input" placeholder="Enter after the fellowship" value="${p.offering}" oninput="setModalPropQuiet('offering',this.value)">`)}
+      ${field('Status', `<select class="field-input" onchange="setModalProp('status',this.value)">${FS_STATUSES.map(s=>`<option ${p.status===s?'selected':''}>${s}</option>`).join('')}</select>`)}
+    </div>
+    ${p.status==='Cancelled' ? field('Reason for cancellation', `<input class="field-input" placeholder="e.g. Heavy rains, host bereaved" value="${esc(p.cancelReason||'')}" oninput="setModalPropQuiet('cancelReason',this.value)">`, e.cancelReason) : ''}
+    ${field('Notes (optional)', `<textarea class="field-input" rows="2" oninput="setModalPropQuiet('notes',this.value)">${esc(p.notes)}</textarea>`)}
+    <label class="field-label">Attachments</label>
+    <input type="file" multiple class="field-input" onchange="fsAddFiles(this)">
+    <div style="margin-top:4px;">${fileList}</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+      <button class="btn-ghost" onclick="${p.id?'openFellowshipModal(\''+p.id+'\')':'setUI({modal:null})'}">Cancel</button>
+      <button class="btn" onclick="saveFellowship()">Save</button>
+    </div>`;
+}
+async function saveFellowship(){
+  const p = UI.modalProps;
+  if(fsScope()) p.district = fsScope();
+  if(!canEditFellowship(p.district)){ showToast('You cannot edit fellowships for this district.'); return; }
+  UI.modalErrors = { district:p.district?'':'Choose a district.', date:p.date?'':'Choose a date.', venue:p.venue.trim()?'':'Enter a venue.', cancelReason:p.status==='Cancelled'&&!(p.cancelReason||'').trim()?'Give the reason for cancellation.':'' };
+  if(Object.values(UI.modalErrors).some(Boolean)){ render(); return; }
+  const payload = { district_id:p.district, fellowship_date:p.date, start_time:p.time||null, venue:p.venue.trim(), service_leader:p.leader.trim()||null, preacher:p.preacher.trim()||null, readings:p.readings.trim()||null, offering:String(p.offering).trim()===''?null:num(p.offering), status:p.status, cancel_reason:p.status==='Cancelled'?(p.cancelReason||'').trim()||null:null, notes:p.notes.trim()||null };
+  await withBusyState(async ()=>{
+    let id = p.id;
+    if(id){
+      const { error } = await sb.from('mis_district_fellowships').update(payload).eq('id', id);
+      if(error){ showToast('Could not save: '+error.message); return; }
+    } else {
+      const { data, error } = await sb.from('mis_district_fellowships').insert({...payload, attachments:[], created_by:ME?ME.name:null}).select().single();
+      if(error){ showToast('Could not save: '+error.message); return; }
+      id = data.id;
+    }
+    const attachments = [...p.attachments];
+    for(const file of p.pendingFiles){
+      const path = `${p.district}/${id}-${Date.now()}-${file.name.replace(/[^\w.\-]+/g,'_')}`;
+      const { error: upErr } = await sb.storage.from(FS_BUCKET).upload(path, file, { contentType:file.type });
+      if(upErr) showToast('Could not upload '+file.name+': '+upErr.message); else attachments.push({path, name:file.name});
+    }
+    if(p.removed.length) await sb.storage.from(FS_BUCKET).remove(p.removed.map(a=>a.path));
+    await sb.from('mis_district_fellowships').update({attachments}).eq('id', id);
+    await logAudit(p.id?'Updated district fellowship':'Scheduled district fellowship', districtName(p.district)+' · '+p.date+' · '+p.venue.trim());
+    await refetch('districtFellowships');
+    UI.modal=null; render(); showToast(p.id?'Fellowship updated.':'Fellowship saved.');
+  });
+}
+async function deleteFellowship(id){
+  const f = STATE.districtFellowships.find(x=>x.id===id);
+  if(!f || !canEditFellowship(f.district_id) || !confirm('Delete this fellowship record and its attachments?')) return;
+  await withBusyState(async ()=>{
+    const { error } = await sb.from('mis_district_fellowships').delete().eq('id', id);
+    if(error){ showToast('Could not delete: '+error.message); return; }
+    if((f.attachments||[]).length) await sb.storage.from(FS_BUCKET).remove(f.attachments.map(a=>a.path));
+    await logAudit('Deleted district fellowship', districtName(f.district_id)+' · '+f.fellowship_date);
+    await refetch('districtFellowships');
+    UI.modal=null; render(); showToast('Fellowship deleted.');
+  });
+}
 function groupOfficialsSummary(groupId){
   const g = groupById(groupId);
   if(!g) return [];
@@ -3867,6 +4582,10 @@ function renderDistrictsTab(){
     <div style="display:flex;gap:20px;border-bottom:1px solid var(--rule);margin-bottom:20px;">
       ${['Districts','Groups'].map(t=>`<button onclick="setUI({groupsSection:'${t}'})" style="background:none;border:none;padding-bottom:9px;font-size:13.5px;border-bottom:2px solid ${UI.groupsSection===t?'var(--brass)':'transparent'};color:${UI.groupsSection===t?'var(--ink)':'var(--charcoal)'};font-weight:${UI.groupsSection===t?'600':'400'};">${t}</button>`).join('')}
     </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;">
+      ${['Districts','Fellowships & Meetings'].map(t=>`<button class="btn-ghost" style="white-space:nowrap;${(UI.districtsSub||'Districts')===t?'border-color:var(--brass);color:var(--ink);font-weight:600;':'border-color:var(--rule);'}" onclick="setUI({districtsSub:'${t}'})">${t}</button>`).join('')}
+    </div>
+    ${(UI.districtsSub||'Districts')==='Fellowships & Meetings' ? renderDistrictFellowships() : `
     ${canEdit ? `<button class="btn" style="margin-bottom:18px;" onclick="openDistrictModal(null)">Add district</button>` : ''}
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;">
       ${STATE.districts.map(d=>{
@@ -3883,7 +4602,7 @@ function renderDistrictsTab(){
           </div>
         </div>`;
       }).join('')}
-    </div>
+    </div>`}
   `;
 }
 function openDistrictModal(id){
@@ -3942,7 +4661,7 @@ function renderGroupDetail(g){
   const canEdit = GROUP_SCOPED_ROLES.includes(sessionRole()) ? sessionGroupId()===g.id : canWrite();
   const roster = groupRosterFor(g.id);
   const focusedRoster = UI.focusName ? roster.filter(r=>r.name===UI.focusName) : roster;
-  const tabs = ['Members','Meetings/Fellowships','Contribution/Donations','Registration'];
+  const tabs = ['Members','Meetings/Fellowships','Calendar of Events','Contribution/Donations','Registration'];
   return `
     <div style="margin-bottom:8px;"><a href="#" onclick="setUI({selectedGroupId:null, focusName:null});return false;" style="font-size:12.5px;color:var(--charcoal);opacity:0.7;">← All groups</a></div>
     ${sectionHeader(g.name, 'Patron: '+esc(g.patron||'Not assigned')+' · '+esc(g.meeting_day)+' '+esc(g.meeting_time)+' · '+esc(g.location), canEdit ? `<button class="btn-ghost" onclick="openGroupModal('${g.id}')">Edit details</button><button class="btn-danger" onclick="confirmRemoveGroup('${g.id}')">Delete group</button>` : '')}
@@ -3952,6 +4671,7 @@ function renderGroupDetail(g){
     </div>
     ${UI.groupTab==='Members' ? renderGroupMembersTab(g, focusedRoster, canEdit) : ''}
     ${UI.groupTab==='Meetings/Fellowships' ? renderGroupMeetingsTab(g, canEdit) : ''}
+    ${UI.groupTab==='Calendar of Events' ? renderGroupCalendarTab(g, canEdit) : ''}
     ${UI.groupTab==='Contribution/Donations' ? renderGroupGivingTab(g, canEdit) : ''}
     ${UI.groupTab==='Registration' ? renderGroupRegistrationTab(g, roster, canEdit) : ''}
   `;
@@ -4071,20 +4791,97 @@ async function setRosterCategory(groupId, personType, personId, category){
     render();
   });
 }
+function renderGroupCalendarTab(g, canEdit){
+  const view = UI.gcView||'Calendar', today = new Date().toISOString().slice(0,10);
+  const events = STATE.events.filter(e=>e.organizer_type==='group' && e.organizer_group_id===g.id);
+  const meetings = STATE.groupMeetings.filter(m=>m.group_id===g.id);
+  const items = [
+    ...events.map(e=>({date:e.event_date, time:e.start_time, title:e.name, kind:'Event', status:eventStatus(e), tone:EVENT_STATUS_TONE[eventStatus(e)]||'var(--navy)', open:`openEventView('${e.id}')`, cancelled:e.status==='Cancelled', sub:[eventTimeRange(e), e.location, e.facilitator?'Facilitator: '+e.facilitator:''].filter(Boolean).join(' · '), files:(e.attachments||[]).length})),
+    ...meetings.map(m=>({date:m.meeting_date, title:m.topic||'Meeting', kind:'Meeting', status:m.status||'Held', tone:m.status==='Cancelled'?'#DC143C':m.status==='Postponed'?'#FFAB00':'#8a8a8a', open:canEdit?`editMeetingMinute('${m.id}')`:'', cancelled:m.status==='Cancelled', sub:[m.location, m.status&&m.status!=='Held'?(m.cancel_reason||''):(m.attendance_count+' present')].filter(Boolean).join(' · '), files:(m.attachments||[]).length}))
+  ];
+  const upcoming = items.filter(x=>x.date>=today && !x.cancelled).sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+  const past = items.filter(x=>!upcoming.includes(x)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const row = x => `<div class="card" style="display:flex;gap:14px;align-items:flex-start;margin-bottom:8px;padding:12px 14px;${x.open?'cursor:pointer;':''}" ${x.open?`onclick="${x.open}"`:''}>
+      <div style="min-width:58px;text-align:center;border-right:1px solid var(--rule-light);padding-right:12px;"><div style="font-size:11px;opacity:0.6;text-transform:uppercase;">${new Date(x.date+'T00:00:00').toLocaleDateString('en-KE',{month:'short'})}</div><div style="font-size:22px;font-weight:600;line-height:1.1;">${+x.date.slice(8,10)}</div><div style="font-size:10.5px;opacity:0.55;">${x.date.slice(0,4)}</div></div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:3px;"><span style="font-size:11px;opacity:0.6;">${x.kind}</span><span class="badge" style="background:${x.tone};">${esc(x.status)}</span>${x.files?`<span style="font-size:11.5px;opacity:0.6;">📎 ${x.files}</span>`:''}</div>
+        <div style="font-size:14.5px;font-weight:600;${x.cancelled?'text-decoration:line-through;opacity:0.7;':''}">${x.time?fmtTime(x.time)+' · ':''}${esc(x.title)}</div>
+        ${x.sub?`<div style="font-size:12.5px;opacity:0.7;margin-top:2px;">${esc(x.sub)}</div>`:''}
+      </div></div>`;
+  let cal = '';
+  if(view==='Calendar'){
+    const now = new Date(), year = UI.gcYear ?? now.getFullYear(), month = UI.gcMonth ?? now.getMonth();
+    const first = new Date(year, month, 1), dim = new Date(year, month+1, 0).getDate(), byDate = {};
+    items.forEach(x=>(byDate[x.date]=byDate[x.date]||[]).push(x));
+    let cells = ''; for(let i=0;i<first.getDay();i++) cells += '<div></div>';
+    for(let d=1; d<=dim; d++){
+      const iso = year+'-'+String(month+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'), its = byDate[iso]||[], isT = iso===today;
+      cells += `<div ${canEdit?`onclick="if(event.target===this||event.target.dataset.day)openEventModal(null,'${iso}','${g.id}')"`:''} style="min-height:78px;padding:6px 4px;border:1px solid ${isT?'var(--brass)':'var(--rule-light)'};border-radius:3px;background:#fff;display:flex;flex-direction:column;gap:3px;min-width:0;${canEdit?'cursor:pointer;':''}">
+        <span data-day="1" style="font-size:12px;font-weight:${isT?'700':'400'};color:${isT?'var(--brass)':'var(--charcoal)'};">${d}</span>
+        ${its.slice(0,3).map(x=>`<span ${x.open?`onclick="event.stopPropagation();${x.open}"`:''} title="${esc(x.kind+' · '+x.title)}" style="${x.open?'cursor:pointer;':''}border-left:3px solid ${x.tone};font-size:10.5px;background:var(--rule-light);border-radius:8px;padding:1px 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${x.cancelled?'text-decoration:line-through;opacity:0.6;':''}">${x.time?fmtTime(x.time)+' ':''}${esc(x.title)}</span>`).join('')}
+        ${its.length>3?`<span style="font-size:10px;opacity:0.6;">+${its.length-3} more</span>`:''}
+      </div>`;
+    }
+    cal = `<div class="card" style="margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <button class="btn-ghost" style="padding:5px 12px;" onclick="gcMove(-1)">← Prev</button>
+        <div style="font-family:var(--font-serif);font-size:16px;">${first.toLocaleDateString('en-KE',{month:'long',year:'numeric'})}</div>
+        <button class="btn-ghost" style="padding:5px 12px;" onclick="gcMove(1)">Next →</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;font-size:11px;opacity:0.55;margin-bottom:4px;">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div>
+      <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;">${cells}</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;margin-top:10px;opacity:0.75;"><span>Events show their status colour</span><span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;background:#8a8a8a;display:inline-block;"></span>Meetings</span>${canEdit?'<span>Click a day to add an event</span>':''}</div>
+    </div>`;
+  }
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+      ${['Calendar','List'].map(v=>`<button class="btn-ghost" style="${view===v?'border-color:var(--brass);font-weight:600;':'border-color:var(--rule);'}" onclick="setUI({gcView:'${v}'})">${v}</button>`).join('')}
+      <div style="flex:1;"></div>
+      ${canEdit?`<button class="btn" style="white-space:nowrap;" onclick="openEventModal(null,null,'${g.id}')">+ Add group event</button>`:''}
+    </div>
+    ${cal}
+    <h3 style="font-size:15px;margin-bottom:10px;">Upcoming <span style="font-weight:400;opacity:0.55;font-size:12.5px;">(${upcoming.length})</span></h3>
+    ${upcoming.map(row).join('') || '<div style="opacity:0.6;font-size:13.5px;margin-bottom:10px;">Nothing scheduled.</div>'}
+    ${view==='List'?`<h3 style="font-size:15px;margin:22px 0 10px;">Past &amp; cancelled <span style="font-weight:400;opacity:0.55;font-size:12.5px;">(${past.length})</span></h3>${past.map(row).join('') || '<div style="opacity:0.6;font-size:13.5px;">None yet.</div>'}`:''}
+  `;
+}
+function gcMove(n){ const now = new Date(); let y = UI.gcYear ?? now.getFullYear(), m = (UI.gcMonth ?? now.getMonth())+n; if(m<0){m=11;y--;} if(m>11){m=0;y++;} setUI({gcYear:y, gcMonth:m}); }
 function renderGroupMeetingsTab(g, canEdit){
   const meetings = STATE.groupMeetings.filter(m=>m.group_id===g.id);
   return `
     ${canEdit ? `<button class="btn-ghost" style="margin-bottom:14px;" onclick="addMeetingMinute('${g.id}')">+ Log a meeting</button>` : ''}
     ${meetings.map(m=>`
       <div class="card" style="margin-bottom:10px;">
-        <div style="font-size:13px;opacity:0.7;margin-bottom:6px;">${fmtDate(m.meeting_date)} · ${esc(m.topic)} — ${m.attendance_count} present · ${esc(m.location)}</div>
+        <div style="font-size:13px;opacity:0.7;margin-bottom:6px;">${fmtDate(m.meeting_date)} · ${esc(m.topic)}${m.status&&m.status!=='Held'?'':' — '+m.attendance_count+' present'} · ${esc(m.location)}</div>
+        ${m.status&&m.status!=='Held'?`<div style="font-size:12.5px;color:#DC143C;margin-bottom:6px;"><strong>${esc(m.status)}</strong>${m.cancel_reason?' — '+esc(m.cancel_reason):''}</div>`:''}
         ${(m.facilitator||m.contact) ? `<div style="font-size:12.5px;opacity:0.65;margin-bottom:6px;">${m.facilitator?'Facilitator: '+esc(m.facilitator):''}${m.facilitator&&m.contact?' · ':''}${m.contact?'Contact: '+esc(m.contact):''}</div>` : ''}
         <div style="font-size:13.5px;line-height:1.5;">${esc(m.minutes)}</div>
-        ${(m.attachments||[]).length ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">${m.attachments.map(a=>`<a href="#" onclick="openMeetingAttachment('${a.path}');return false;" style="font-size:12px;color:var(--brass);border:1px solid var(--rule);padding:3px 9px;border-radius:20px;">📎 ${esc(a.name)}</a>`).join('')}</div>` : ''}
+        ${meetingFilesView(m.attachments||[])}
+        ${canEdit ? `<div style="display:flex;justify-content:flex-end;margin-top:10px;"><button class="btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="editMeetingMinute('${m.id}')">Edit / attach files</button></div>` : ''}
       </div>`).join('') || '<div style="opacity:0.6;font-size:13.5px;">No meetings logged yet.</div>'}
   `;
 }
-function addMeetingMinute(gid){ UI.modal='meeting'; UI.modalProps={gid, date:new Date().toISOString().slice(0,10), topic:'', attendanceCount:0, location:'', minutes:'', facilitator:'', contact:'', pendingFiles:[]}; UI.modalErrors={}; render(); }
+function addMeetingMinute(gid){ UI.modal='meeting'; UI.modalProps={id:null, status:'Held', cancelReason:'', gid, date:new Date().toISOString().slice(0,10), topic:'', attendanceCount:0, location:'', minutes:'', facilitator:'', contact:'', pendingFiles:[], attachments:[], removed:[]}; UI.modalErrors={}; render(); }
+function editMeetingMinute(id){
+  const m = STATE.groupMeetings.find(x=>x.id===id); if(!m) return;
+  UI.modal='meeting';
+  UI.modalProps={id, status:m.status||'Held', cancelReason:m.cancel_reason||'', gid:m.group_id, date:m.meeting_date, topic:m.topic||'', attendanceCount:m.attendance_count||0, location:m.location||'', minutes:m.minutes||'', facilitator:m.facilitator||'', contact:m.contact||'', pendingFiles:[], attachments:[...(m.attachments||[])], removed:[]};
+  UI.modalErrors={}; render();
+}
+const IMG_EXT = /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i;
+function isImageFile(a){ return IMG_EXT.test(a.name||a.path||''); }
+function meetingFilesView(list){
+  if(!list.length) return '';
+  const photos = list.filter(isImageFile), docs = list.filter(a=>!isImageFile(a));
+  return `${photos.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;margin-top:10px;">${photos.map(a=>`<a href="#" onclick="openMeetingAttachment('${esc(a.path)}');return false;" title="${esc(a.name)}" style="display:block;aspect-ratio:1;background:var(--rule-light);border:1px solid var(--rule);overflow:hidden;"><img data-signed-path="${esc(a.path)}" alt="${esc(a.name)}" style="width:100%;height:100%;object-fit:cover;display:block;"></a>`).join('')}</div>`:''}
+  ${docs.length?`<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">${docs.map(a=>`<a href="#" onclick="openMeetingAttachment('${esc(a.path)}');return false;" style="font-size:12px;color:var(--brass);border:1px solid var(--rule);padding:3px 9px;border-radius:20px;">📎 ${esc(a.name)}</a>`).join('')}</div>`:''}`;
+}
+async function hydrateSignedImages(){
+  const imgs = document.querySelectorAll('img[data-signed-path]:not([data-hydrated])');
+  for(const img of imgs){ img.setAttribute('data-hydrated','1'); const url = await getSignedFileUrl(img.getAttribute('data-signed-path')); if(url) img.src = url; }
+}
+if(!window.__signedImgObs){ window.__signedImgObs = new MutationObserver(()=>hydrateSignedImages()); window.__signedImgObs.observe(document.documentElement, {childList:true, subtree:true}); }
+function removeExistingMeetingFile(i){ const p = UI.modalProps; p.removed.push(p.attachments[i]); p.attachments = p.attachments.filter((_,x)=>x!==i); render(); }
 function addMeetingAttachmentFiles(input){
   UI.modalProps.pendingFiles = [...(UI.modalProps.pendingFiles||[]), ...Array.from(input.files||[])];
   input.value='';
@@ -4094,22 +4891,34 @@ function removePendingMeetingFile(i){ UI.modalProps.pendingFiles = (UI.modalProp
 async function openMeetingAttachment(path){ const url = await getSignedFileUrl(path); if(url) window.open(url,'_blank'); else showToast('Could not open file.'); }
 async function saveMeetingMinute(){
   const p = UI.modalProps;
-  const errs = {date:validateRequired(p.date,'Date'), topic:validateRequired(p.topic,'Topic')};
+  const errs = {date:validateRequired(p.date,'Date'), topic:validateRequired(p.topic,'Topic'), cancelReason:(p.status&&p.status!=='Held'&&!(p.cancelReason||'').trim())?'Give the reason.':''};
   UI.modalErrors = errs;
-  if(errs.date||errs.topic){ render(); return; }
+  if(errs.date||errs.topic||errs.cancelReason){ render(); return; }
   await withBusyState(async ()=>{
-    const { data, error } = await sb.from('mis_group_meetings').insert({group_id:p.gid, meeting_date:p.date, topic:p.topic.trim(), attendance_count:p.attendanceCount||0, location:p.location.trim(), minutes:p.minutes.trim(), facilitator:p.facilitator.trim(), contact:p.contact.trim()}).select().single();
+    const payload = {status:p.status||'Held', cancel_reason:p.status!=='Held'?(p.cancelReason||'').trim()||null:null, group_id:p.gid, meeting_date:p.date, topic:p.topic.trim(), attendance_count:p.attendanceCount||0, location:p.location.trim(), minutes:p.minutes.trim(), facilitator:p.facilitator.trim(), contact:p.contact.trim()};
+    let data, error;
+    if(p.id){
+      const r = await sb.from('mis_group_meetings').update(payload).eq('id', p.id).select();
+      error = r.error;
+      if(!error && !(r.data||[]).length){ showToast('Could not save: your account does not have permission to edit this meeting (database rule). Ask the System Administrator to run the permissions update.'); return; }
+      data = { id:p.id };
+    } else {
+      const r = await sb.from('mis_group_meetings').insert(payload).select();
+      error = r.error; data = (r.data||[])[0];
+      if(!error && !data){ showToast('Saved, but the new meeting could not be read back — refresh to see it.'); await refetch('groupMeetings'); UI.modal=null; render(); return; }
+    }
     if(error){ showToast('Could not save: '+error.message); return; }
-    const attachments = [];
+    const attachments = [...(p.attachments||[])];
     for(const file of (p.pendingFiles||[])){
-      const path = `${p.gid}/meeting-${data.id}-${Date.now()}-${file.name}`;
+      const path = `${p.gid}/meeting-${data.id}-${Date.now()}-${file.name.replace(/[^\w.\-]+/g,'_')}`;
       const { error: upErr } = await sb.storage.from('group-member-files').upload(path, file, { contentType: file.type });
       if(!upErr) attachments.push({path, name:file.name}); else showToast('Could not upload '+file.name+': '+upErr.message);
     }
-    if(attachments.length){ await sb.from('mis_group_meetings').update({attachments}).eq('id', data.id); }
-    await logAudit('Logged group meeting', p.topic.trim());
+    if((p.removed||[]).length) await sb.storage.from('group-member-files').remove(p.removed.map(a=>a.path));
+    if(p.id || attachments.length){ await sb.from('mis_group_meetings').update({attachments}).eq('id', data.id); }
+    await logAudit(p.id?'Updated group meeting':'Logged group meeting', p.topic.trim()+(p.pendingFiles.length?' · '+p.pendingFiles.length+' file(s) attached':''));
     await refetch('groupMeetings');
-    UI.modal=null; render(); showToast('Meeting logged.');
+    UI.modal=null; render(); showToast(p.id?'Meeting updated.':'Meeting logged.');
   });
 }
 function renderGroupGivingTab(g, canEdit){
@@ -4779,6 +5588,10 @@ function renderModalHost(){
   else if(UI.modal==='welfareMember') body = welfareMemberModalBody();
   else if(UI.modal==='welfareCase') body = welfareCaseModalBody();
   else if(UI.modal==='welfareContrib') body = welfareContribModalBody();
+  else if(UI.modal==='fellowship') body = fellowshipModalBody();
+  else if(UI.modal==='history') body = historyModalBody();
+  else if(UI.modal==='historyView') body = historyViewModalBody();
+  else if(UI.modal==='historyLeader') body = leaderModalBody();
   else if(UI.modal==='event') body = eventModalBody();
   else if(UI.modal==='eventView') body = eventViewModalBody();
   else if(UI.modal==='followup') body = followupModalBody();
@@ -4893,9 +5706,11 @@ function householdModalBody(){
 function meetingModalBody(){
   const p = UI.modalProps, e = UI.modalErrors||{};
   return `
-    <h2 style="font-size:19px;margin-bottom:18px;">Log a meeting</h2>
+    <h2 style="font-size:19px;margin-bottom:18px;">${p.id?'Edit meeting':'Log a meeting'}</h2>
     ${field('Date', `<input type="date" class="field-input" value="${p.date}" onchange="setModalProp('date',this.value)">`, e.date)}
     ${field('Topic', `<input class="field-input" value="${esc(p.topic)}" oninput="setModalPropQuiet('topic',this.value)">`, e.topic)}
+    ${field('Status', `<select class="field-input" onchange="setModalProp('status',this.value)">${['Held','Cancelled','Postponed'].map(s=>`<option ${(p.status||'Held')===s?'selected':''}>${s}</option>`).join('')}</select>`)}
+    ${p.status && p.status!=='Held' ? field('Reason for '+p.status.toLowerCase().replace('ed','ation').replace('postponation','postponement'), `<input class="field-input" placeholder="e.g. Clashed with Presbytery meeting" value="${esc(p.cancelReason||'')}" oninput="setModalPropQuiet('cancelReason',this.value)">`, e.cancelReason) : ''}
     ${field('Attendance', `<input type="number" class="field-input" value="${p.attendanceCount}" oninput="setModalPropQuiet('attendanceCount',num(this.value))">`)}
     ${field('Location', `<input class="field-input" value="${esc(p.location)}" oninput="setModalPropQuiet('location',this.value)">`)}
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -4903,12 +5718,17 @@ function meetingModalBody(){
       ${phoneField('Contact', 'contact', p.contact)}
     </div>
     ${field('Minutes', `<textarea class="field-input" rows="4" oninput="setModalPropQuiet('minutes',this.value)">${esc(p.minutes)}</textarea>`)}
-    <label class="field-label">Attach documents</label>
-    <input type="file" multiple class="field-input" onchange="addMeetingAttachmentFiles(this)">
-    ${(p.pendingFiles||[]).map((f,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;margin-top:6px;"><span>📎 ${esc(f.name)}</span><button class="btn-danger" onclick="removePendingMeetingFile(${i})">Remove</button></div>`).join('')}
+    <label class="field-label">Documents &amp; photos</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📄 Add documents<input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">🖼 Add photos<input type="file" multiple accept="image/*" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+      <label class="btn-ghost" style="cursor:pointer;white-space:nowrap;">📷 Take photo<input type="file" accept="image/*" capture="environment" style="display:none;" onchange="addMeetingAttachmentFiles(this)"></label>
+    </div>
+    ${(p.attachments||[]).map((a,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="display:flex;align-items:center;gap:8px;min-width:0;">${isImageFile(a)?`<img data-signed-path="${esc(a.path)}" style="width:36px;height:36px;object-fit:cover;background:var(--rule-light);flex:none;">`:'📎'}<span style="overflow-wrap:anywhere;">${esc(a.name)}</span></span><button class="btn-danger" onclick="removeExistingMeetingFile(${i})">Remove</button></div>`).join('')}
+    ${(p.pendingFiles||[]).map((f,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--rule-light);"><span style="overflow-wrap:anywhere;">${f.type&&f.type.startsWith('image/')?'🖼':'📎'} ${esc(f.name)} <span style="opacity:0.55;">(new)</span></span><button class="btn-danger" onclick="removePendingMeetingFile(${i})">Remove</button></div>`).join('')}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn-ghost" onclick="setUI({modal:null})">Cancel</button>
-      <button class="btn" onclick="saveMeetingMinute()">Log meeting</button>
+      <button class="btn" onclick="saveMeetingMinute()">${p.id?'Save changes':'Log meeting'}</button>
     </div>`;
 }
 function roleHolderModalBody(){
