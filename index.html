@@ -970,7 +970,9 @@ async function getSignedFileUrl(path){
   if(!path) return null;
   const cached = SIGNED_URL_CACHE.get(path);
   if(cached && cached.expiresAt > Date.now()+60000) return cached.url;
-  const { data, error } = await sb.storage.from('group-member-files').createSignedUrl(path, 3600);
+  const isFs = (STATE.districtFellowships||[]).some(f=>(f.attachments||[]).some(a=>a.path===path));
+  let { data, error } = await sb.storage.from(isFs ? 'district-fellowship-files' : 'group-member-files').createSignedUrl(path, 3600);
+  if(error || !data) ({ data, error } = await sb.storage.from(isFs ? 'group-member-files' : 'district-fellowship-files').createSignedUrl(path, 3600));
   if(error || !data) return null;
   SIGNED_URL_CACHE.set(path, { url: data.signedUrl, expiresAt: Date.now()+3600*1000 });
   return data.signedUrl;
